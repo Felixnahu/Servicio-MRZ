@@ -26,6 +26,7 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
+    Form,
     Header,
     HTTPException,
     UploadFile,
@@ -296,20 +297,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/mrz/leer")
     async def read_mrz(
         file: Annotated[UploadFile | None, File()] = None,
+        front: Annotated[UploadFile | None, File()] = None,
         back: Annotated[UploadFile | None, File()] = None,
+        documentType: Annotated[str | None, Form()] = None,  # noqa: N803  (nombre del contrato)
+        ticketTypeId: Annotated[str | None, Form()] = None,  # noqa: N803
     ):
         """Lee la MRZ de una foto y devuelve el JSON del contrato de la app.
 
-        - `file` (+ `back` opcional): la app manda la foto del documento (y la otra cara). Se lee
-          la primera cara; si no tiene MRZ y llego la otra, se lee esa.
+        - `front` (o su alias `file`) + `back` opcional, en una sola peticion, como la app.
+          Se lee la primera cara; si no tiene MRZ y llego la otra, se lee esa.
+        - `documentType` y `ticketTypeId` se aceptan por compatibilidad y no se usan.
         - Sin archivos: el servicio toma la foto de su propia camara y la lee.
         200 = JSON del contrato. 422 = no se leyo, con `pista`: `sin_mrz` (se ve un documento pero
         sin MRZ: dar la vuelta a la tarjeta) o `no_legible` (mejorar luz/enfoque/posicion).
         Las fotos no se guardan ni se registran sus datos.
         """
         images: list[np.ndarray] = []
-        if file is not None:
-            images.append(_decode(await _upload(file)))
+        first = front if front is not None else file
+        if first is not None:
+            images.append(_decode(await _upload(first)))
             if back is not None:
                 images.append(_decode(await _upload(back)))
         else:
@@ -332,7 +338,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for img in images:
             printed = await asyncio.to_thread(reader.read_visual, img)
             if printed is not None:
-                printed["kycMs"] = int((time.monotonic() - started) * 1000)
+                printed["kycMs"] = printed["duracionMs"] = int((time.monotonic() - started) * 1000)
                 return printed
         ms = int((time.monotonic() - started) * 1000)
         hint = "sin_mrz" if card_seen else "no_legible"
@@ -341,8 +347,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if hint == "sin_mrz"
             else "No se pudo leer la MRZ: mejore la luz, el enfoque o la posicion"
         )
+        # `codigo` es el que la app ya sabe tratar (reintento); el detalle va en `reasons`/`pista`.
         return JSONResponse(
-            {"codigo": "MRZ_NO_ENCONTRADA", "mensaje": message, "pista": hint, "kycMs": ms},
+            {
+                "codigo": "DOCUMENTO_NO_LEGIBLE",
+                "mensaje": message,
+                "reasons": ["mrz_not_found"],
+                "pista": hint,
+                "origen": "LOCAL",
+                "kycMs": ms,
+                "duracionMs": ms,
+            },
             status_code=422,
         )
 

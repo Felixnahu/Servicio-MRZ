@@ -52,6 +52,7 @@ def from_mrz(result: MrzResult, *, elapsed_ms: int, today: date | None = None) -
         "suggestedCategory": None,
         "categoryMatches": None,
         "kycMs": elapsed_ms,
+        "duracionMs": elapsed_ms,
         "source": "mrz",
         "mrzChecks": result.checks,
         "mrzFusedFrames": result.fused_frames,

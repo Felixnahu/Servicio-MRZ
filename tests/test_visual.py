@@ -139,4 +139,4 @@ def test_endpoint_is_422_when_neither_mrz_nor_printed_text_is_read(monkeypatch):
     client = TestClient(create_app(Settings(camera_enabled=False, _env_file=None)))
     with client as c:
         res = c.post("/mrz/leer", files={"file": ("f.jpg", buf.tobytes(), "image/jpeg")})
-    assert res.status_code == 422 and res.json()["codigo"] == "MRZ_NO_ENCONTRADA"
+    assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"

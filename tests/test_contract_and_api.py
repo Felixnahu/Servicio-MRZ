@@ -199,8 +199,32 @@ def test_photo_without_mrz_is_422_with_a_hint():
     with _client() as c:
         res = c.post("/mrz/leer", files={"file": ("f.jpg", blank, "image/jpeg")})
     assert res.status_code == 422
-    assert res.json()["codigo"] == "MRZ_NO_ENCONTRADA"
-    assert res.json()["pista"] in {"sin_mrz", "no_legible"}
+    body = res.json()
+    assert body["codigo"] == "DOCUMENTO_NO_LEGIBLE"  # el que la app de SIBOSAM sabe tratar
+    assert body["reasons"] == ["mrz_not_found"] and body["duracionMs"] == body["kycMs"]
+    assert body["pista"] in {"sin_mrz", "no_legible"}
+
+
+def test_app_style_request_front_and_back_with_extra_fields_in_one_call():
+    """Como la app de SIBOSAM: `front` + `back` + documentType/ticketTypeId en una peticion."""
+    import numpy as np
+    import pytest
+
+    if not FONT.exists():
+        pytest.skip("requiere la fuente Consolas de Windows")
+    blank = _jpeg(np.full((480, 640, 3), 200, np.uint8))
+    with _client() as c:
+        res = c.post(
+            "/mrz/leer",
+            data={"documentType": "PASSPORT", "ticketTypeId": "x"},
+            files={
+                "front": ("front.jpg", blank, "image/jpeg"),
+                "back": ("back.jpg", _td3_jpeg(), "image/jpeg"),
+            },
+        )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["fields"]["documentNumber"] == "L898902C" and "duracionMs" in body
 
 
 def test_back_face_is_used_when_the_front_has_no_mrz():
