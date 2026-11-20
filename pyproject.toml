@@ -1,0 +1,41 @@
+[project]
+name = "servicio-mrz"
+version = "0.1.0"
+description = "Servicio local del totem: lectura de MRZ (cedula/pasaporte) desde camara web"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi>=0.165.0",
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "opencv-python-headless>=5.1.0.95",
+    "pydantic>=2.14.4",
+    "pydantic-settings>=2.16.3",
+    "pygrabber>=0.2",
+    "python-multipart>=0.0.34",
+    "rapidocr-onnxruntime>=1.4.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.4,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/servicio_mrz/testpage.py" = ["E501"]  # HTML/JS embebido
+"src/servicio_mrz/diagpage.py" = ["E501"]

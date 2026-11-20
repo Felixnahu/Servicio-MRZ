@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Privacidad: documentos reales, configuracion local y perfiles de camara. Nunca se versionan.
+samples/
+data/
+.env
+camera_profile.json
+
+# Experimentos locales con rutas de esta maquina (no forman parte del servicio)
+tools/
