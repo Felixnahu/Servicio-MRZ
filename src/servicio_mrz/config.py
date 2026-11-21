@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Cedula 2023: tras leer la MRZ, lee el "lugar de nacimiento" del reverso (franja superior,
     # ~0.3 s) para `isSamaipateno`. Si falla o no hay tiempo, queda en null.
     birthplace_ocr: bool = True
+    # Lugar de nacimiento que cuenta como samaipateno. Solo se cambia para PROBAR con un carnet de
+    # otro lugar (p. ej. BIRTHPLACE_TARGET=TUPIZA); en produccion, el valor por defecto.
+    birthplace_target: str = "SAMAIPATA"
 
     # Solo loopback: el stream muestra documentos de identidad.
     host: str = "127.0.0.1"

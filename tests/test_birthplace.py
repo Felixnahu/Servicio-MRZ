@@ -54,3 +54,15 @@ def test_suggested_category_samaipateno():
     assert contract.suggested_category("BOL", 30, True) == "samaipateno"
     assert contract.suggested_category("BOL", 30, False) == "nacional_adulto"
     assert contract.suggested_category("BOL", 30, None) == "nacional_adulto"
+
+
+def test_target_place_can_be_changed_for_testing_and_is_restored():
+    try:
+        birthplace.set_target("Tupiza")
+        assert birthplace.decide("TUPIZA - POTOSI") is True
+        assert birthplace.decide("SAMAIPATA") is False  # ya no es el lugar buscado
+        birthplace.set_target("  ")  # vacio: no cambia
+        assert birthplace.TARGET == "TUPIZA"
+    finally:
+        birthplace.set_target("SAMAIPATA")
+    assert birthplace.decide("SAMAIPATA") is True

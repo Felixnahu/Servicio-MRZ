@@ -35,7 +35,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from servicio_mrz import camera_profile, contract
+from servicio_mrz import birthplace, camera_profile, contract
 from servicio_mrz.calibration import Calibrator
 from servicio_mrz.camera import Camera, device_names, encode_jpeg
 from servicio_mrz.config import Settings
@@ -87,6 +87,9 @@ async def _upload(file: UploadFile) -> bytes:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    birthplace.set_target(settings.birthplace_target)
+    if birthplace.TARGET != "SAMAIPATA":
+        log.warning("BIRTHPLACE_TARGET=%s: modo de prueba, no es Samaipata", birthplace.TARGET)
     camera = Camera(settings.camera_index, settings.camera_width, settings.camera_height)
     reader = MrzReader(
         threads=settings.ocr_threads,

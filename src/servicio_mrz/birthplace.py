@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from servicio_mrz.visual import Box
 
-TARGET = "SAMAIPATA"
+TARGET = "SAMAIPATA"  # lugar buscado (cambiable con BIRTHPLACE_TARGET, para pruebas)
 MATCH_RATIO = 0.75  # 9 letras: tolera hasta 2 errores del OCR
 MIN_LETTERS = 4  # menos letras que esto no es un lugar leido
 BAND_BELOW = (0.4, 1.8)  # filas (en alturas de linea) bajo la etiqueta donde esta el valor
@@ -28,6 +28,14 @@ _LABEL_WORDS = ("NACIMIENTO", "FECHA", "LUGAR")
 
 def _letters(text: str) -> str:
     return re.sub(r"[^A-Z]", "", text.upper())
+
+
+def set_target(place: str) -> None:
+    """Cambia el lugar que cuenta como "de aqui" (solo letras; vacio = no cambia)."""
+    global TARGET  # noqa: PLW0603 - un unico valor de configuracion por proceso
+    letters = _letters(place)
+    if letters:
+        TARGET = letters
 
 
 def has_samaipata(text: str) -> bool:
