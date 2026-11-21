@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # impresos (no se puede interrumpir una vez empezado).
     request_budget_s: float = 15.0
     # Tope de POST /mrz/leer incluido el KYC. La app de SIBOSAM deja de esperar a los 45 s.
-    request_deadline_s: float = 42.0
+    request_deadline_s: float = 40.0
 
     camera_index: int = 0
     camera_width: int = 1280

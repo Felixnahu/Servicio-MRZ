@@ -340,3 +340,33 @@ def test_valid_mrz_never_reaches_the_kyc(monkeypatch):
     with _client() as c:
         res = c.post("/mrz/leer", files={"front": ("f.jpg", _td3_jpeg(), "image/jpeg")})
     assert res.status_code == 200 and res.json()["source"] == "mrz" and calls == []
+
+
+def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
+    """Aunque el KYC no conteste, el servicio responde antes de que la app abandone."""
+    import asyncio
+    import time
+
+    import numpy as np
+
+    from servicio_mrz import kyc_client
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    async def never(settings, front, back=None):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(kyc_client, "read_document", never)
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    settings = Settings(
+        camera_enabled=False,
+        visual_ocr=False,
+        kyc_base_url="https://kyc.invalid",
+        request_deadline_s=1.0,  # el minimo de espera al KYC es 5 s
+        _env_file=None,
+    )
+    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
+    started = time.monotonic()
+    with TestClient(create_app(settings)) as c:
+        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
+    assert res.status_code == 503 and res.json()["codigo"] == "KYC_TIEMPO_AGOTADO"
+    assert time.monotonic() - started < 10

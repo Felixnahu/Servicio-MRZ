@@ -383,25 +383,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 update={"kyc_timeout_s": min(settings.kyc_timeout_s, max(remaining, 5.0))}
             )
             try:
-                data = await kyc_client.read_document(
-                    kyc_settings, raws[0], raws[1] if len(raws) > 1 else None
+                # httpx aplica su timeout por operacion, no al total: wait_for pone el tope real.
+                data = await asyncio.wait_for(
+                    kyc_client.read_document(
+                        kyc_settings, raws[0], raws[1] if len(raws) > 1 else None
+                    ),
+                    timeout=max(remaining, 5.0),
                 )
-            except kyc_client.KycError as e:
+            except (kyc_client.KycError, TimeoutError) as e:
                 ms = int((time.monotonic() - started) * 1000)
+                if isinstance(e, kyc_client.KycError):
+                    code, message, kyc_elapsed = e.code, str(e), e.elapsed_ms
+                else:
+                    code, message, kyc_elapsed = (
+                        "KYC_TIEMPO_AGOTADO", "El KYC no respondio a tiempo", None,
+                    )
                 log.info(
                     "leer: fotos=%d mrz_ms=%s total_ms=%d resultado=kyc_error codigo=%s",
-                    len(images), mrz_ms, ms, e.code,
+                    len(images), mrz_ms, ms, code,
                 )
                 return JSONResponse(
                     {
-                        "codigo": e.code,
-                        "mensaje": str(e),
+                        "codigo": code,
+                        "mensaje": message,
                         "reasons": ["mrz_not_found"],
                         "origen": "KYC",
-                        "kycMs": e.elapsed_ms or ms,
-                        "duracionMs": e.elapsed_ms or ms,
+                        "kycMs": kyc_elapsed or ms,
+                        "duracionMs": kyc_elapsed or ms,
                     },
-                    status_code=422 if e.code == "DOCUMENTO_NO_LEGIBLE" else 503,
+                    status_code=422 if code == "DOCUMENTO_NO_LEGIBLE" else 503,
                 )
             ms = int((time.monotonic() - started) * 1000)
             kyc_ms = data.get("kycMs")
