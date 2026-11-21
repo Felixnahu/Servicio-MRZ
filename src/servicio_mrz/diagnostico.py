@@ -41,20 +41,22 @@ def _cpu_score() -> float:
 def main() -> None:
     from servicio_mrz.ocr import make_engine
 
-    print(f"nucleos logicos: {os.cpu_count()}")
-    print(f"calculo fijo (1 hilo): {_cpu_score():.2f} s")
+    print(f"nucleos logicos: {os.cpu_count()}", flush=True)
+    print(f"calculo fijo (1 hilo): {_cpu_score():.2f} s  (referencia laptop de desarrollo: 0.09 s)",
+          flush=True)
     img = _synthetic_card()
-    for threads in (1, 2, 4):
+    for threads in (2, 4):  # 2 = valor actual del servicio
         engine = make_engine(threads)
-        engine(img)  # calentamiento
+        engine(img)  # calentamiento (no cuenta)
         times = []
-        for _ in range(3):
+        for _ in range(2):
             t = time.monotonic()
             result, _ = engine(img)
             times.append(time.monotonic() - t)
         print(
-            f"OCR con {threads} hilo(s): mediana {statistics.median(times):.1f} s "
-            f"(min {min(times):.1f}, max {max(times):.1f}; {len(result or [])} cajas)"
+            f"OCR con {threads} hilos: mediana {statistics.median(times):.1f} s "
+            f"(min {min(times):.1f}, max {max(times):.1f}; {len(result or [])} cajas)",
+            flush=True,
         )
 
 
