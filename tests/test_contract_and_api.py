@@ -309,7 +309,11 @@ def test_without_mrz_the_photos_go_to_the_kyc_and_its_contract_is_returned(monke
     kyc = {"documentType": "CI_BO", "fields": {"birthDate": "1990-03-15"}, "source": "external"}
     client, blank, calls = _totem_client(monkeypatch, kyc)
     with client as c:
-        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)})
+        res = c.post(
+            "/mrz/leer",
+            data={"documentType": "CI_BO"},
+            files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)},
+        )
     assert res.status_code == 200
     body = res.json()
     assert body["source"] == "external" and body["fields"]["birthDate"] == "1990-03-15"
@@ -327,7 +331,9 @@ def test_kyc_errors_keep_the_codes_the_app_understands(monkeypatch):
     for code, status in cases:
         client, blank, _ = _totem_client(monkeypatch, kyc_client.KycError(code, "x"))
         with client as c:
-            res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
+            res = c.post(
+                "/mrz/leer", data={"documentType": "CI_BO"}, files={"front": ("f.jpg", blank)}
+            )
         body = res.json()
         assert (res.status_code, body["codigo"], body["origen"]) == (status, code, "KYC")
 
@@ -370,7 +376,9 @@ def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
     blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
     started = time.monotonic()
     with TestClient(create_app(settings)) as c:
-        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
+        res = c.post(
+            "/mrz/leer", data={"documentType": "CI_BO"}, files={"front": ("f.jpg", blank)}
+        )
     assert res.status_code == 503 and res.json()["codigo"] == "KYC_TIEMPO_AGOTADO"
     assert time.monotonic() - started < 10
 
@@ -445,3 +453,13 @@ def test_an_empty_table_photo_is_not_sent_to_the_kyc(monkeypatch):
         res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
     assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
     assert calls == []
+
+
+def test_only_the_allowed_document_types_reach_the_kyc(monkeypatch):
+    """Por defecto solo CI_BO: pasaporte, otros tipos y tipo ausente no salen del totem."""
+    for doc_type in ("PASSPORT", "FOREIGN_ID", "STUDENT_CARD", "NONE", None):
+        client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
+        data = {} if doc_type is None else {"documentType": doc_type}
+        with client as c:
+            res = c.post("/mrz/leer", data=data, files={"front": ("f.jpg", blank)})
+        assert res.status_code == 422 and calls == [], doc_type
