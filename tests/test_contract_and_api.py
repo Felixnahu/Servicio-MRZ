@@ -443,23 +443,24 @@ def test_passport_skips_the_second_photo_when_the_first_was_slow(monkeypatch):
         assert len(seen) == expected
 
 
-def test_an_empty_table_photo_is_not_sent_to_the_kyc(monkeypatch):
-    """Sin lineas de texto (documento aun no puesto) se rechaza sin consultar al KYC."""
+def test_a_document_without_type_or_with_another_type_still_reaches_the_kyc(monkeypatch):
+    """La cedula antigua no debe quedar fuera por el tipo: solo se excluyen los pasaportes."""
+    for data in ({}, {"documentType": "CI_BO"}, {"documentType": "FOREIGN_ID"}):
+        client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
+        with client as c:
+            res = c.post("/mrz/leer", data=data, files={"front": ("f.jpg", blank)})
+        assert res.status_code == 200 and len(calls) == 1, data
+
+
+def test_a_two_line_mrz_seen_locally_blocks_the_kyc_even_without_the_type(monkeypatch):
+    """Pasaporte que la app no marco como tal: la lectura local ve una MRZ de 2 lineas."""
     from servicio_mrz.ocr import MrzReader, Reading
 
     client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    fake = type("R", (), {"format": "TD3", "core_checks_ok": False})()  # lectura incompleta
+    monkeypatch.setattr(
+        MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(fake, rows=(1, 2))
+    )
     with client as c:
         res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
-    assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
-    assert calls == []
-
-
-def test_only_the_allowed_document_types_reach_the_kyc(monkeypatch):
-    """Por defecto solo CI_BO: pasaporte, otros tipos y tipo ausente no salen del totem."""
-    for doc_type in ("PASSPORT", "FOREIGN_ID", "STUDENT_CARD", "NONE", None):
-        client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-        data = {} if doc_type is None else {"documentType": doc_type}
-        with client as c:
-            res = c.post("/mrz/leer", data=data, files={"front": ("f.jpg", blank)})
-        assert res.status_code == 422 and calls == [], doc_type
+    assert res.status_code == 422 and calls == []

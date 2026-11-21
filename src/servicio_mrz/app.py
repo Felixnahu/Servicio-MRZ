@@ -331,7 +331,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raws = [encode_jpeg(latest[1], quality=90)]
         started = time.monotonic()
         card_seen = False
-        has_content = False  # alguna foto mostro lineas de texto (no una mesa vacia)
+        looks_passport = False  # la lectura local vio una MRZ de 2 lineas (pasaporte)
         mrz_ms: list[int] = []
         # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
         # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
@@ -357,7 +357,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return contract.from_mrz(reading.result, elapsed_ms=ms)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
-            has_content = has_content or len(reading.rows) >= 2 or reading.boxes > 0
+            looks_passport = (
+                looks_passport
+                or (reading.result is not None and reading.result.format == "TD3")
+                or (reading.observation is not None and reading.observation.lines == 2)
+            )
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
         if settings.save_failed_photos:
@@ -387,12 +391,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return printed
         # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
-        # El KYC solo se usa para los tipos de documento permitidos (por defecto, la cedula
-        # antigua: CI_BO). No reconoce pasaportes (comprobado en el totem): enviarlos suma ~40 s de
-        # espera y expone la foto sin ganar nada. Un tipo ausente o desconocido tampoco se envia.
-        # Tampoco se envia una foto sin lineas de texto (mesa vacia, documento aun no puesto).
-        kyc_allowed = (documentType or "").strip().upper() in settings.kyc_types
-        if settings.kyc_fallback and settings.kyc_base_url and kyc_allowed and has_content:
+        # El KYC NO lee pasaportes (comprobado en el totem): enviarlos suma ~40 s de espera y expone
+        # la foto sin ganar nada. Se excluyen por el tipo que informa la app y por lo que vio la
+        # lectura local (MRZ de 2 lineas). Cualquier otro documento sin MRZ legible, p. ej. la
+        # cedula antigua, si va al KYC.
+        excluded = (documentType or "").strip().upper() in settings.kyc_excluded
+        if settings.kyc_fallback and settings.kyc_base_url and not (excluded or looks_passport):
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
             remaining = settings.request_deadline_s - (time.monotonic() - started)
