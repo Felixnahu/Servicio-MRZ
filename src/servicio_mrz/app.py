@@ -630,10 +630,16 @@ def _set_priority(level: str) -> None:
     """
     try:
         import ctypes
+        from ctypes import wintypes
 
-        ctypes.windll.kernel32.SetPriorityClass(
-            ctypes.windll.kernel32.GetCurrentProcess(), _PRIORITY_CLASS[level]
-        )
+        # Sin declarar los tipos, el pseudo-handle -1 de GetCurrentProcess se trunca a 32 bits y
+        # la llamada falla en silencio.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetPriorityClass.restype = wintypes.BOOL
+        if not kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), _PRIORITY_CLASS[level]):
+            raise OSError(ctypes.get_last_error(), "SetPriorityClass")
         log.info("Prioridad del proceso: %s", level)
     except Exception:  # noqa: BLE001 - no es critico (otro sistema o sin permiso)
         log.debug("no se pudo fijar la prioridad del proceso")
