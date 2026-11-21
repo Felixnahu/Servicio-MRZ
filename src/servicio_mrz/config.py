@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     kyc_base_url: str = ""
     kyc_api_key: str = ""
     kyc_timeout_s: float = 45.0
+    # POST /mrz/leer: si la MRZ no se lee (cedula antigua, reflejos...) se envian las fotos a este
+    # KYC para que las lea. Solo actua si KYC_BASE_URL esta configurado.
+    kyc_fallback: bool = True
+    # OCR local de campos impresos (~1.7 s en un PC rapido, ~20 s en el totem). En el totem va en
+    # false (iniciar.bat) y las cedulas antiguas se resuelven con el KYC.
+    visual_ocr: bool = True
 
     # Solo loopback: el stream muestra documentos de identidad.
     host: str = "127.0.0.1"

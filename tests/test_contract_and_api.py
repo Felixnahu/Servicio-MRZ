@@ -274,3 +274,69 @@ def test_recognition_mode_can_be_switched_to_photo_only():
     )
     with photo_only as c:
         assert c.get("/reconocimiento").json() == {"auto": False}
+
+
+def _totem_client(monkeypatch, kyc_result):
+    """Como el totem: sin OCR local, con KYC configurado (simulado: no sale ninguna foto)."""
+    import numpy as np
+
+    from servicio_mrz import kyc_client
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    calls = []
+
+    async def fake_read(settings, front, back=None):
+        calls.append((len(front), None if back is None else len(back)))
+        if isinstance(kyc_result, Exception):
+            raise kyc_result
+        return dict(kyc_result)
+
+    monkeypatch.setattr(kyc_client, "read_document", fake_read)
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    settings = Settings(
+        camera_enabled=False,
+        visual_ocr=False,
+        kyc_base_url="https://kyc.invalid",
+        _env_file=None,
+    )
+    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
+    return TestClient(create_app(settings)), blank, calls
+
+
+def test_without_mrz_the_photos_go_to_the_kyc_and_its_contract_is_returned(monkeypatch):
+    kyc = {"documentType": "CI_BO", "fields": {"birthDate": "1990-03-15"}, "source": "external"}
+    client, blank, calls = _totem_client(monkeypatch, kyc)
+    with client as c:
+        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["source"] == "external" and body["fields"]["birthDate"] == "1990-03-15"
+    assert "duracionMs" in body and calls == [(len(blank), len(blank))]
+
+
+def test_kyc_errors_keep_the_codes_the_app_understands(monkeypatch):
+    from servicio_mrz import kyc_client
+
+    cases = [
+        ("DOCUMENTO_NO_LEGIBLE", 422),
+        ("KYC_TIEMPO_AGOTADO", 503),
+        ("KYC_SIN_CONEXION", 503),
+    ]
+    for code, status in cases:
+        client, blank, _ = _totem_client(monkeypatch, kyc_client.KycError(code, "x"))
+        with client as c:
+            res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
+        body = res.json()
+        assert (res.status_code, body["codigo"], body["origen"]) == (status, code, "KYC")
+
+
+def test_valid_mrz_never_reaches_the_kyc(monkeypatch):
+    import pytest
+
+    if not FONT.exists():
+        pytest.skip("requiere la fuente Consolas de Windows")
+    client, _, calls = _totem_client(monkeypatch, {})
+    monkeypatch.undo()  # lectura MRZ real; el KYC sigue sin configurarse
+    with _client() as c:
+        res = c.post("/mrz/leer", files={"front": ("f.jpg", _td3_jpeg(), "image/jpeg")})
+    assert res.status_code == 200 and res.json()["source"] == "mrz" and calls == []

@@ -13,6 +13,9 @@ rem use la camara (pagina /probar), definir CAMERA_ENABLED=true antes de ejecuta
 if not defined CAMERA_ENABLED set "CAMERA_ENABLED=false"
 rem En el totem el visitante espera la lectura: prioridad normal (en la laptop de desarrollo baja).
 if not defined LOW_PRIORITY set "LOW_PRIORITY=false"
+rem El OCR local de campos impresos tarda ~20 s en el totem: las cedulas antiguas (sin MRZ) van al
+rem KYC de .env. Para volver a usar el OCR local: definir VISUAL_OCR=true antes de este script.
+if not defined VISUAL_OCR set "VISUAL_OCR=false"
 
 if not exist data mkdir data
 rem Registro en data\servicio.log (no contiene datos de documentos). Se rota al pasar de 5 MB.

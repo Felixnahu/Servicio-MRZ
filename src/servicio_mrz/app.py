@@ -313,17 +313,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sin MRZ: dar la vuelta a la tarjeta) o `no_legible` (mejorar luz/enfoque/posicion).
         Las fotos no se guardan ni se registran sus datos.
         """
-        images: list[np.ndarray] = []
+        raws: list[bytes] = []  # bytes originales: solo se usan si hay que consultar el KYC
         first = front if front is not None else file
         if first is not None:
-            images.append(_decode(await _upload(first)))
+            raws.append(await _upload(first))
             if back is not None:
-                images.append(_decode(await _upload(back)))
+                raws.append(await _upload(back))
+            images = [_decode(raw) for raw in raws]
         else:
             latest = camera.latest()
             if latest is None:
                 raise HTTPException(503, {"codigo": "CAMARA_SIN_IMAGEN", "mensaje": "Sin cuadros"})
-            images.append(latest[1])
+            images = [latest[1]]
+            raws = [encode_jpeg(latest[1], quality=90)]
         started = time.monotonic()
         card_seen = False
         mrz_ms: list[int] = []
@@ -350,7 +352,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             card_seen = card_seen or looks_id1
         # Sin MRZ legible: campos impresos por OCR (sin digitos de control: va marcado REVIEW)
         visual_ms: list[int] = []
-        for img in images:
+        for img in images if settings.visual_ocr else []:
             if time.monotonic() - started >= settings.request_budget_s:
                 log.warning("leer: presupuesto de %.0f s agotado, se omite el OCR impreso",
                             settings.request_budget_s)
@@ -371,6 +373,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ms,
                 )
                 return printed
+        # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
+        # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
+        if settings.kyc_fallback and settings.kyc_base_url:
+            try:
+                data = await kyc_client.read_document(
+                    settings, raws[0], raws[1] if len(raws) > 1 else None
+                )
+            except kyc_client.KycError as e:
+                ms = int((time.monotonic() - started) * 1000)
+                log.info(
+                    "leer: fotos=%d mrz_ms=%s total_ms=%d resultado=kyc_error codigo=%s",
+                    len(images), mrz_ms, ms, e.code,
+                )
+                return JSONResponse(
+                    {
+                        "codigo": e.code,
+                        "mensaje": str(e),
+                        "reasons": ["mrz_not_found"],
+                        "origen": "KYC",
+                        "kycMs": e.elapsed_ms or ms,
+                        "duracionMs": e.elapsed_ms or ms,
+                    },
+                    status_code=422 if e.code == "DOCUMENTO_NO_LEGIBLE" else 503,
+                )
+            ms = int((time.monotonic() - started) * 1000)
+            data["duracionMs"] = data["kycMs"] = ms
+            log.info(
+                "leer: fotos=%d mrz_ms=%s total_ms=%d resultado=kyc", len(images), mrz_ms, ms
+            )
+            return data
         ms = int((time.monotonic() - started) * 1000)
         log.info(
             "leer: fotos=%d %s mrz_ms=%s visual_ms=%s total_ms=%d resultado=no_legible",
