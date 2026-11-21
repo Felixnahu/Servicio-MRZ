@@ -392,13 +392,18 @@ def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
     assert time.monotonic() - started < 10
 
 
-def test_passports_are_never_sent_to_the_kyc(monkeypatch):
+def test_passport_shaped_documents_are_never_sent_to_the_kyc(monkeypatch):
+    """La app no dice que documento es: un pasaporte se reconoce por la proporcion de su tarjeta
+    (~1.42, las cedulas miden >= 1.47) y no va al KYC aunque la lectura de la MRZ falle."""
+    from servicio_mrz.ocr import MrzReader, Reading
+
     client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
+    corners = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
+    passport = Reading(None, rows=(1, 2), card=corners, card_aspect=1.40)
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: passport)
     with client as c:
         res = c.post(
-            "/mrz/leer",
-            data={"documentType": "PASSPORT"},
-            files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)},
+            "/mrz/leer", files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
         )
     assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
     assert calls == []

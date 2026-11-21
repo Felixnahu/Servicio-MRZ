@@ -106,9 +106,11 @@ def test_old_ci_reader_is_skipped_for_passports_and_when_an_mrz_was_seen(monkeyp
     files = {"front": ("f.jpg", buf.tobytes())}
     settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
 
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    corners = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
+    passport = Reading(None, card=corners, card_aspect=1.40)  # proporcion de pasaporte
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: passport)
     with TestClient(create_app(settings)) as c:
-        c.post("/mrz/leer", data={"documentType": "PASSPORT"}, files=files)
+        c.post("/mrz/leer", files=files)  # la app no manda el tipo: se deduce de la forma
     assert calls == []
 
     seen = Reading(None, observation=Observation(2, (np.zeros((44, 3)),), 0.9))

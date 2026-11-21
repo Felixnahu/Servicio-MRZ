@@ -49,7 +49,7 @@ from servicio_mrz.testpage import PAGE
 log = logging.getLogger("servicio_mrz")
 
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
-SECOND_PHOTO_MAX_S = 6.0
+SECOND_PHOTO_MAX_S = 10.0
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
 STREAM_WIDTH = 960
@@ -314,7 +314,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         - `front` (o su alias `file`) + `back` opcional, en una sola peticion, como la app.
           Se lee la primera cara; si no tiene MRZ y llego la otra, se lee esa.
-        - `documentType` y `ticketTypeId` se aceptan por compatibilidad y no se usan.
+        - `documentType` y `ticketTypeId` se aceptan por compatibilidad y se IGNORAN: el tipo se
+          deduce del propio documento (MRZ de 2 o 3 lineas, proporcion de la tarjeta).
         - Sin archivos: el servicio toma la foto de su propia camara y la lee.
         200 = JSON del contrato. 422 = no se leyo, con `pista`: `sin_mrz` (se ve un documento pero
         sin MRZ: dar la vuelta a la tarjeta) o `no_legible` (mejorar luz/enfoque/posicion).
@@ -337,16 +338,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         card_seen = False
         mrz_seen = False  # alguna foto mostro una MRZ (aunque no se leyo): no es carnet antiguo
         mrz_ms: list[int] = []
-        # La app SIEMPRE manda dos fotos ("frente" y "reverso") y el tipo sale de la categoria de
-        # la entrada, no de lo que el visitante muestra. Donde esta la MRZ depende del documento:
-        #  - cedula 2023: en el reverso (2a foto);
-        #  - pasaporte: en la pagina de datos, que el visitante suele dar como 1a foto.
-        # Por eso el orden es solo una preferencia y NUNCA se descarta una foto sin mirarla: la 2a
-        # se salta solo si la 1a ya mostro una MRZ (misma pagina, otra captura) y gasto tiempo.
-        is_passport = (documentType or "").upper() == "PASSPORT"
-        order = (
-            [images[1], images[0]] if len(images) == 2 and not is_passport else list(images)
-        )
+        passport_shaped = False  # alguna tarjeta localizada mide menos de 1.47 de proporcion
+        # La app SIEMPRE manda dos fotos ("frente" y "reverso") y NO dice que documento es: el tipo
+        # se deduce de lo que se ve. Donde esta la MRZ depende del documento (cedula 2023: reverso;
+        # pasaporte: pagina de datos, en cualquiera de las dos). El orden es solo una preferencia
+        # y NUNCA se descarta una foto sin mirarla: la 2a se salta solo si la 1a ya mostro una MRZ
+        # (misma pagina, otra captura) y gasto mucho tiempo.
+        order = [images[1], images[0]] if len(images) == 2 else list(images)
         for img in order:
             if mrz_ms and mrz_seen and time.monotonic() - started >= SECOND_PHOTO_MAX_S:
                 break
@@ -380,11 +378,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             mrz_seen = mrz_seen or reading.observation is not None
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
+            passport_shaped = passport_shaped or (
+                reading.card is not None and 0 < reading.card_aspect < ID1_MIN_ASPECT
+            )
+        # La proporcion discrimina mal (cedulas 1.46-1.61, pasaportes 1.26-1.47): una sola foto
+        # "baja" no basta. Es pasaporte solo si NINGUNA foto mostro proporcion de cedula.
+        passport_like = passport_shaped and not card_seen
         if settings.save_failed_photos:
             await asyncio.to_thread(_save_failed, Path(settings.data_dir) / "fallidas", raws)
         # Cedula antigua (sin MRZ): lectura local por plantilla (nombre y fecha del reverso, numero
-        # del anverso). Solo si ninguna foto mostro una MRZ y no es un pasaporte.
-        if settings.old_ci_ocr and not mrz_seen and not is_passport:
+        # del anverso). Solo si ninguna foto mostro una MRZ ni tiene forma de pasaporte.
+        if settings.old_ci_ocr and not (mrz_seen or passport_like):
             t0 = time.monotonic()
             old = await asyncio.to_thread(reader.read_old_ci, images)
             ms = int((time.monotonic() - started) * 1000)
@@ -425,8 +429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (comprobado en el totem) y un documento con MRZ que aqui no se pudo leer (pasaporte o
         # cedula 2023) necesita otra foto, no el KYC. "Tiene MRZ" = la lectura local vio texto
         # con estructura de MRZ (medido: ninguna foto sin MRZ lo mostro, todos los pasaportes si).
-        excluded = (documentType or "").strip().upper() in settings.kyc_excluded
-        if settings.kyc_fallback and settings.kyc_base_url and not (excluded or mrz_seen):
+        if settings.kyc_fallback and settings.kyc_base_url and not (passport_like or mrz_seen):
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
             remaining = settings.request_deadline_s - (time.monotonic() - started)

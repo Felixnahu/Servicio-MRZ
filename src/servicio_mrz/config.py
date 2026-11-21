@@ -13,9 +13,6 @@ class Settings(BaseSettings):
     # POST /mrz/leer: si la MRZ no se lee (cedula antigua, reflejos...) se envian las fotos a este
     # KYC para que las lea. Solo actua si KYC_BASE_URL esta configurado.
     kyc_fallback: bool = True
-    # Tipos de documento (campo `documentType` de la app) que NUNCA van al KYC, separados por comas.
-    # El KYC no lee pasaportes.
-    kyc_excluded_types: str = "PASSPORT"
     # Guarda en data/fallidas las fotos que no se pudieron leer, para medirlas despues. SOLO para
     # pruebas: son documentos reales; borrar la carpeta al terminar.
     save_failed_photos: bool = False
@@ -67,7 +64,3 @@ class Settings(BaseSettings):
     camera_width: int = 1280
     camera_height: int = 720
     camera_enabled: bool = True
-
-    @property
-    def kyc_excluded(self) -> set[str]:
-        return {x.strip().upper() for x in self.kyc_excluded_types.split(",") if x.strip()}
