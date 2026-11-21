@@ -618,24 +618,31 @@ def _save_failed(folder: Path, raws: list[bytes]) -> None:
     log.info("leer: %d foto(s) fallida(s) guardadas en %s", len(raws), folder)
 
 
-def _lower_priority() -> None:
-    """El servicio comparte maquina con la app del totem: que no le quite CPU (solo Windows)."""
+_PRIORITY_CLASS = {"below_normal": 0x4000, "normal": 0x20, "above_normal": 0x8000}
+
+
+def _set_priority(level: str) -> None:
+    """Fija la prioridad del proceso (solo Windows). Subir hasta 'above_normal' no pide admin.
+
+    La tarea programada de Windows arranca el servicio con prioridad por DEBAJO de lo normal y la
+    hereda: en el totem la app (pantalla y camara) le quita la CPU y la lectura pasa de ~3 s a
+    ~15 s. Por eso se fija explicitamente en vez de dejarla como llegue.
+    """
     try:
         import ctypes
 
-        below_normal = 0x00004000
         ctypes.windll.kernel32.SetPriorityClass(
-            ctypes.windll.kernel32.GetCurrentProcess(), below_normal
+            ctypes.windll.kernel32.GetCurrentProcess(), _PRIORITY_CLASS[level]
         )
+        log.info("Prioridad del proceso: %s", level)
     except Exception:  # noqa: BLE001 - no es critico (otro sistema o sin permiso)
-        log.debug("no se pudo bajar la prioridad del proceso")
+        log.debug("no se pudo fijar la prioridad del proceso")
 
 
 def main() -> None:
     settings = Settings()
-    if settings.low_priority:
-        _lower_priority()
     logging.basicConfig(level=logging.INFO)
+    _set_priority(settings.priority or ("below_normal" if settings.low_priority else "normal"))
     app = create_app(settings)
     # Cargar los modelos ahora y no con la primera foto del visitante (en un equipo lento tarda).
     threading.Thread(target=app.state.reader.warm_up, name="warm-up", daemon=True).start()

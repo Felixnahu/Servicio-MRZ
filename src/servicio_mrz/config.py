@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # Baja la prioridad del proceso para no quitarle CPU a otras aplicaciones (util en un equipo de
     # desarrollo). En el totem (iniciar.bat) va en false: ahi el visitante espera este resultado.
     low_priority: bool = True
+    # Prioridad explicita del proceso: below_normal, normal o above_normal (vacio = la que dicte
+    # low_priority). En el totem iniciar.bat usa above_normal: la tarea programada de Windows lo
+    # arranca por DEBAJO de lo normal y la app le quita la CPU.
+    priority: str = ""
     # Presupuesto blando de POST /mrz/leer: si la MRZ ya lo consumio, no se intenta el OCR de campos
     # impresos (no se puede interrumpir una vez empezado).
     request_budget_s: float = 15.0
