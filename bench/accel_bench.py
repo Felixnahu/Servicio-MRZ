@@ -1,4 +1,4 @@
-"""Compara el OCR en CPU y en GPU (DirectML) con una imagen sintetica. Sin fotos ni datos personales.
+"""Compara el OCR en CPU y en GPU (DirectML) con una imagen sintetica (sin datos personales).
 
 Se ejecuta en un entorno APARTE (ver probar_aceleracion.ps1): no toca el entorno del servicio.
 """
