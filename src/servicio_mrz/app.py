@@ -376,9 +376,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
         if settings.kyc_fallback and settings.kyc_base_url:
+            # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
+            # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
+            remaining = settings.request_deadline_s - (time.monotonic() - started)
+            kyc_settings = settings.model_copy(
+                update={"kyc_timeout_s": min(settings.kyc_timeout_s, max(remaining, 5.0))}
+            )
             try:
                 data = await kyc_client.read_document(
-                    settings, raws[0], raws[1] if len(raws) > 1 else None
+                    kyc_settings, raws[0], raws[1] if len(raws) > 1 else None
                 )
             except kyc_client.KycError as e:
                 ms = int((time.monotonic() - started) * 1000)
@@ -398,9 +404,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     status_code=422 if e.code == "DOCUMENTO_NO_LEGIBLE" else 503,
                 )
             ms = int((time.monotonic() - started) * 1000)
+            kyc_ms = data.get("kycMs")
             data["duracionMs"] = data["kycMs"] = ms
+            # Solo estado y codigos de razon (nunca valores del documento).
             log.info(
-                "leer: fotos=%d mrz_ms=%s total_ms=%d resultado=kyc", len(images), mrz_ms, ms
+                "leer: fotos=%d mrz_ms=%s kyc_ms=%s total_ms=%d resultado=kyc estado=%s "
+                "manual=%s razones=%s",
+                len(images), mrz_ms, kyc_ms, ms, data.get("status"),
+                data.get("requiresManualEntry"), data.get("reasons"),
             )
             return data
         ms = int((time.monotonic() - started) * 1000)
