@@ -80,7 +80,7 @@ def test_endpoint_uses_the_local_old_ci_reader_before_the_kyc(monkeypatch):
 
     calls = []
 
-    def fake_old(self, images):
+    def fake_old(self, images, deadline=None):
         calls.append(len(images))
         return {"documentType": "CI_BO", "fields": {"birthDate": "1985-03-15"}, "source": "ocr"}
 
@@ -101,7 +101,7 @@ def test_old_ci_reader_is_skipped_for_passports_and_when_an_mrz_was_seen(monkeyp
     from servicio_mrz.mrzread import Observation
 
     calls = []
-    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs: calls.append(1))
+    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, deadline=None: calls.append(1))
     ok, buf = cv2.imencode(".jpg", np.full((400, 600, 3), 200, np.uint8))
     files = {"front": ("f.jpg", buf.tobytes())}
     settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
@@ -118,3 +118,15 @@ def test_old_ci_reader_is_skipped_for_passports_and_when_an_mrz_was_seen(monkeyp
     with TestClient(create_app(settings)) as c:
         c.post("/mrz/leer", data={"documentType": "CI_BO"}, files=files)
     assert calls == []
+
+
+def test_old_ci_reader_stops_at_the_deadline():
+    """Con el plazo vencido no se hace ningun OCR (en el totem pasaba de 40 s y la app abandona)."""
+    import time
+
+    class Boom:
+        def __call__(self, *a, **k):
+            raise AssertionError("no debe leer nada tras el plazo")
+
+    img = np.full((400, 600, 3), 200, np.uint8)
+    assert oldci.read_old_ci(Boom(), [img, img], deadline=time.monotonic() - 1) is None

@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # Cedula antigua (sin MRZ): lectura local por plantilla antes de recurrir al KYC (~0.8 s por
     # foto en un PC rapido). Solo actua si ninguna foto mostro una MRZ.
     old_ci_ocr: bool = True
+    # Tope (segundos desde que llega la peticion) del OCR del carnet antiguo.
+    old_ci_deadline_s: float = 28.0
     # Cedula 2023: tras leer la MRZ, lee el "lugar de nacimiento" del reverso (franja superior,
     # ~0.3 s) para `isSamaipateno`. Si falla o no hay tiempo, queda en null.
     birthplace_ocr: bool = True

@@ -50,6 +50,7 @@ log = logging.getLogger("servicio_mrz")
 
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
 SECOND_PHOTO_MAX_S = 10.0
+OLD_CI_MIN_S = 10.0  # trabajo minimo que se da al OCR del carnet antiguo
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
 STREAM_WIDTH = 960
@@ -390,7 +391,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # del anverso). Solo si ninguna foto mostro una MRZ ni tiene forma de pasaporte.
         if settings.old_ci_ocr and not (mrz_seen or passport_like):
             t0 = time.monotonic()
-            old = await asyncio.to_thread(reader.read_old_ci, images)
+            # Al menos 10 s de trabajo aunque la MRZ haya gastado mucho, pero nunca mas alla de
+            # `old_ci_deadline_s` desde el inicio: la app abandona a los 45 s.
+            old_deadline = min(
+                max(t0 + OLD_CI_MIN_S, started + settings.old_ci_deadline_s),
+                started + settings.request_deadline_s - 5,
+            )
+            old = await asyncio.to_thread(reader.read_old_ci, images, old_deadline)
             ms = int((time.monotonic() - started) * 1000)
             log.info(
                 "leer: fotos=%d mrz_ms=%s carnet_antiguo_ms=%d total_ms=%d resultado=%s",

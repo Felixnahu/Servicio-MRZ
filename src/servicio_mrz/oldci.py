@@ -21,6 +21,7 @@ anversos (el rojo claro sobre beige a veces ni se detecta): si falta, se avisa y
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -114,16 +115,30 @@ def _back(engine: Any, card: np.ndarray) -> OldCiRead | None:
     return parse_back(boxes, width)
 
 
-def read_old_ci(engine: Any, images: list[np.ndarray]) -> dict[str, Any] | None:
+def read_old_ci(
+    engine: Any, images: list[np.ndarray], deadline: float | None = None
+) -> dict[str, Any] | None:
     """Datos de una cedula antigua a partir de sus fotos (frente y/o reverso, en cualquier orden).
 
-    None si no se logra la fecha de nacimiento: el llamador pasa al respaldo.
+    `deadline` (time.monotonic) corta el trabajo entre pasos: en un equipo lento o saturado esta
+    lectura puede pasar de 40 s y la app abandona a los 45. None si no se logra la fecha de
+    nacimiento (o se agota el tiempo): el llamador pasa al respaldo.
     """
-    cards = [visual._prepare(img) for img in images]
+
+    def late() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    cards = []
+    for img in images:
+        if late():
+            break
+        cards.append(visual._prepare(img))
     total = OldCiRead()
     # 1.a pasada (barata): el numero del anverso. Una cara con numero legible es el anverso.
     front_idx: set[int] = set()
     for i, card in enumerate(cards):
+        if late():
+            break
         number = _front_number(engine, card)
         if number:
             total.number = total.number or number
@@ -135,7 +150,11 @@ def read_old_ci(engine: Any, images: list[np.ndarray]) -> dict[str, Any] | None:
             break
         if i in front_idx:
             continue
-        part = _back(engine, cards[i]) or _back(engine, cv2.rotate(cards[i], cv2.ROTATE_180))
+        if late():
+            break
+        part = _back(engine, cards[i])
+        if part is None and not late():
+            part = _back(engine, cv2.rotate(cards[i], cv2.ROTATE_180))
         if part is not None:
             total.merge(part)
     if total.born is None:
