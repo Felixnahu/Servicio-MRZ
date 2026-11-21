@@ -16,6 +16,9 @@ if not defined LOW_PRIORITY set "LOW_PRIORITY=false"
 rem El OCR local de campos impresos tarda ~20 s en el totem: las cedulas antiguas (sin MRZ) van al
 rem KYC de .env. Para volver a usar el OCR local: definir VISUAL_OCR=true antes de este script.
 if not defined VISUAL_OCR set "VISUAL_OCR=false"
+rem El totem es ~5x mas lento que un PC de desarrollo: con el presupuesto por defecto (2.7 s) la lectura
+rem de MRZ se corta tras una sola variante y pierde pasaportes que si se leen con mas tiempo.
+if not defined OCR_BUDGET_S set "OCR_BUDGET_S=12"
 
 if not exist data mkdir data
 rem Registro en data\servicio.log (no contiene datos de documentos). Se rota al pasar de 5 MB.

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
 
     # Hilos de ONNX/OpenCV: 2 = ~1.7 s por lectura con ~2.4 nucleos; 0 = todos (mucha mas CPU).
     ocr_threads: int = 2
+    # Tiempo que la lectura de MRZ puede seguir probando variantes y alineaciones tras el primer
+    # intento. Es tiempo ABSOLUTO: en un equipo ~5x mas lento (el totem) 2.7 s alcanzan para una
+    # sola variante y se pierden lecturas que el mismo codigo logra en un PC rapido.
+    ocr_budget_s: float = 2.7
     # Baja la prioridad del proceso para no quitarle CPU a otras aplicaciones (util en un equipo de
     # desarrollo). En el totem (iniciar.bat) va en false: ahi el visitante espera este resultado.
     low_priority: bool = True

@@ -88,7 +88,7 @@ async def _upload(file: UploadFile) -> bytes:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     camera = Camera(settings.camera_index, settings.camera_width, settings.camera_height)
-    reader = MrzReader(threads=settings.ocr_threads)
+    reader = MrzReader(threads=settings.ocr_threads, budget_s=settings.ocr_budget_s)
     calibrator = Calibrator(camera, reader, Path(settings.data_dir) / "calibracion")
     hub = Hub()
 

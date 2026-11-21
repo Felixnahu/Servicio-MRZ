@@ -212,7 +212,8 @@ def make_engine(threads: int = 0):
 
 
 class MrzReader:
-    def __init__(self, threads: int = 0) -> None:
+    def __init__(self, threads: int = 0, budget_s: float = DEFAULT_BUDGET_S) -> None:
+        self._budget_s = budget_s
         self._engine = None
         self._line_recognizer = None
         self._init_lock = threading.Lock()
@@ -247,14 +248,14 @@ class MrzReader:
     def read(self, img: np.ndarray) -> MrzResult | None:
         return self.read_detailed(img).result
 
-    def read_detailed(self, img: np.ndarray, budget_s: float = DEFAULT_BUDGET_S) -> Reading:
+    def read_detailed(self, img: np.ndarray, budget_s: float | None = None) -> Reading:
         """Mejor MRZ hallada y la geometria de lo detectado (para dibujar y depurar).
 
         Camino rapido: localizar la tarjeta, enderezarla y reconocer sus lineas MRZ una a una.
         Respaldo: OCR general sobre el cuadro (tarjeta no localizada, p. ej. pasaporte en la mano).
         """
         started = time.monotonic()
-        deadline = started + budget_s
+        deadline = started + (self._budget_s if budget_s is None else budget_s)
         card_reading = self._read_card(img, started, deadline)
         if card_reading is not None:
             # Con la tarjeta localizada el camino por lineas es el bueno; el OCR general (4-8 s por
