@@ -156,3 +156,22 @@ def test_snap_does_not_turn_a_td1_into_a_passport():
     truth = ["I<BOL" + "<" * 25, "<" * 15 + "BOL" + "<" * 12, "A" * 30]
     fixed = celldecode.snap_fields(truth, _scores(truth, {(0, 0): "P"}), 3)
     assert fixed[0][0] in "IAC"
+
+
+def test_a_thin_bottom_strip_is_the_card_edge_not_an_mrz_line():
+    """Reverso de cedula con 3 lineas MRZ + el borde inferior de la tarjeta: las 3 lineas MRZ son
+    las 3 primeras, no las 3 ultimas (sin esto, la cedula del totem no se leia)."""
+    from servicio_mrz import mrzread
+    from servicio_mrz.mrzlines import LineSegment
+
+    segs = [
+        LineSegment(524, 552, 123, 986),
+        LineSegment(575, 607, 73, 986),
+        LineSegment(629, 662, 43, 981),
+        LineSegment(690, 707, 40, 1005),  # 17 px frente a ~30: borde de la tarjeta
+    ]
+    first_three = mrzread.hypotheses(segs, 707)[0]
+    assert first_three[1] == 3 and [s.y0 for s in first_three[0]] == [524, 575, 629]
+    # una banda final de grosor normal SI cuenta como linea
+    segs[-1] = LineSegment(690, 720, 40, 1005)
+    assert [s.y0 for s in mrzread.hypotheses(segs, 740)[0][0]] == [575, 629, 690]

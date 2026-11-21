@@ -24,6 +24,7 @@ from servicio_mrz.mrzlines import LineSegment
 # este umbral no se prueban mas variantes: no hay MRZ legible y el OCR visual toma el relevo.
 NO_MRZ_CONFIDENCE = 0.55  # medido: bajo esto la 1a variante lee basura y las demas tambien
 PREFERRED_BONUS = 1.2  # a igual lectura, se prefiere el formato que sugiere la forma de la tarjeta
+EDGE_STRIP_RATIO = 0.7  # una banda final mas fina que esto (vs la mediana) es borde, no linea
 MIN_CONFIDENCE = 0.45  # por debajo, el reconocedor estaba "adivinando" (medido: ~0.6 vs ~0.2)
 
 
@@ -45,9 +46,22 @@ class CardRead:
     observation: Observation | None = None
 
 
+def _without_edge_strip(segs: list[LineSegment]) -> list[LineSegment]:
+    """Quita la ultima banda si es mucho mas delgada que las demas: es el borde inferior de la
+    tarjeta (el recorte puede incluir algo de la mesa), no una linea de la MRZ. Sin esto, la
+    hipotesis "las 3 ultimas lineas" toma una linea de la MRZ de menos y la franja del borde."""
+    if len(segs) < 4:
+        return segs
+    heights = sorted(s.y1 - s.y0 for s in segs[:-1])
+    median = heights[len(heights) // 2]
+    last = segs[-1].y1 - segs[-1].y0
+    return segs[:-1] if last < EDGE_STRIP_RATIO * median else segs
+
+
 def hypotheses(segs: list[LineSegment], card_height: int) -> list[tuple[list[LineSegment], int]]:
     """(lineas a decodificar, numero de lineas del formato)."""
     out: list[tuple[list[LineSegment], int]] = []
+    segs = _without_edge_strip(segs)
     if len(segs) >= 3:
         out.append((segs[-3:], 3))
         out.append((segs[-2:], 2))
