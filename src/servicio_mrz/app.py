@@ -327,7 +327,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started = time.monotonic()
         card_seen = False
         mrz_ms: list[int] = []
-        for img in images:
+        # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
+        # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
+        for img in reversed(images) if len(images) == 2 else images:
             t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)
             mrz_ms.append(int((time.monotonic() - t0) * 1000))
@@ -349,6 +351,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Sin MRZ legible: campos impresos por OCR (sin digitos de control: va marcado REVIEW)
         visual_ms: list[int] = []
         for img in images:
+            if time.monotonic() - started >= settings.request_budget_s:
+                log.warning("leer: presupuesto de %.0f s agotado, se omite el OCR impreso",
+                            settings.request_budget_s)
+                break  # un OCR impreso en un equipo lento puede tardar decenas de segundos
             t0 = time.monotonic()
             printed = await asyncio.to_thread(reader.read_visual, img)
             visual_ms.append(int((time.monotonic() - t0) * 1000))

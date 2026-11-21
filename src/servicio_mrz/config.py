@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Baja la prioridad del proceso para no quitarle CPU a otras aplicaciones (util en un equipo de
     # desarrollo). En el totem (iniciar.bat) va en false: ahi el visitante espera este resultado.
     low_priority: bool = True
+    # Presupuesto blando de POST /mrz/leer: si la MRZ ya lo consumio, no se intenta el OCR de campos
+    # impresos (no se puede interrumpir una vez empezado).
+    request_budget_s: float = 15.0
 
     camera_index: int = 0
     camera_width: int = 1280
