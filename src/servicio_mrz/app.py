@@ -331,6 +331,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raws = [encode_jpeg(latest[1], quality=90)]
         started = time.monotonic()
         card_seen = False
+        has_content = False  # alguna foto mostro lineas de texto (no una mesa vacia)
         mrz_ms: list[int] = []
         # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
         # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
@@ -356,6 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return contract.from_mrz(reading.result, elapsed_ms=ms)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
+            has_content = has_content or len(reading.rows) >= 2 or reading.boxes > 0
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
         if settings.save_failed_photos:
@@ -387,7 +389,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
         # El KYC no reconoce pasaportes (comprobado en el totem): enviarlos solo suma ~40 s de
         # espera y expone la foto sin ganar nada. Si aqui no se lee, se rechaza de inmediato.
-        if settings.kyc_fallback and settings.kyc_base_url and not is_passport:
+        # Sin lineas de texto en la foto (mesa vacia, documento aun no puesto) tampoco se envia:
+        # el KYC tardaba ~10 s en decir "no legible" y la foto se exponia para nada.
+        if settings.kyc_fallback and settings.kyc_base_url and not is_passport and has_content:
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
             remaining = settings.request_deadline_s - (time.monotonic() - started)

@@ -292,7 +292,9 @@ def _totem_client(monkeypatch, kyc_result):
         return dict(kyc_result)
 
     monkeypatch.setattr(kyc_client, "read_document", fake_read)
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    # hay lineas de texto en la foto: un documento sin MRZ legible, no una mesa vacia
+    with_text = Reading(None, rows=(object(), object()))
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: with_text)
     settings = Settings(
         camera_enabled=False,
         visual_ocr=False,
@@ -356,7 +358,8 @@ def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
         await asyncio.sleep(30)
 
     monkeypatch.setattr(kyc_client, "read_document", never)
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    with_text = Reading(None, rows=(object(), object()))
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: with_text)
     settings = Settings(
         camera_enabled=False,
         visual_ocr=False,
@@ -430,3 +433,15 @@ def test_passport_skips_the_second_photo_when_the_first_was_slow(monkeypatch):
         with TestClient(create_app(settings)) as c:
             c.post("/mrz/leer", data={"documentType": doc_type}, files=files)
         assert len(seen) == expected
+
+
+def test_an_empty_table_photo_is_not_sent_to_the_kyc(monkeypatch):
+    """Sin lineas de texto (documento aun no puesto) se rechaza sin consultar al KYC."""
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    with client as c:
+        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
+    assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
+    assert calls == []
