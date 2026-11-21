@@ -29,6 +29,9 @@ class Settings(BaseSettings):
 
     # Hilos de ONNX/OpenCV: 2 = ~1.7 s por lectura con ~2.4 nucleos; 0 = todos (mucha mas CPU).
     ocr_threads: int = 2
+    # Baja la prioridad del proceso para no quitarle CPU a otras aplicaciones (util en un equipo de
+    # desarrollo). En el totem (iniciar.bat) va en false: ahi el visitante espera este resultado.
+    low_priority: bool = True
 
     camera_index: int = 0
     camera_width: int = 1280

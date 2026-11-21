@@ -11,6 +11,8 @@ rem En el totem la APP toma las fotos con su propia camara y las manda al servic
 rem debe abrirla (una webcam USB suele dejarse abrir por un solo programa). Para que el servicio
 rem use la camara (pagina /probar), definir CAMERA_ENABLED=true antes de ejecutar este script.
 if not defined CAMERA_ENABLED set "CAMERA_ENABLED=false"
+rem En el totem el visitante espera la lectura: prioridad normal (en la laptop de desarrollo baja).
+if not defined LOW_PRIORITY set "LOW_PRIORITY=false"
 
 if not exist data mkdir data
 rem Registro en data\servicio.log (no contiene datos de documentos). Se rota al pasar de 5 MB.

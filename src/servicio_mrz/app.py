@@ -14,6 +14,7 @@ import asyncio
 import logging
 import re
 import secrets
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -325,22 +326,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             images.append(latest[1])
         started = time.monotonic()
         card_seen = False
+        mrz_ms: list[int] = []
         for img in images:
+            t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)
+            mrz_ms.append(int((time.monotonic() - t0) * 1000))
             if reading.checks_ok and reading.result is not None:
                 ms = int((time.monotonic() - started) * 1000)
+                # Solo tiempos y tamanos: nunca valores del documento.
+                log.info(
+                    "leer: fotos=%d %s mrz_ms=%s total_ms=%d resultado=mrz",
+                    len(images),
+                    [f"{i.shape[1]}x{i.shape[0]}" for i in images],
+                    mrz_ms,
+                    ms,
+                )
                 return contract.from_mrz(reading.result, elapsed_ms=ms)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
         # Sin MRZ legible: campos impresos por OCR (sin digitos de control: va marcado REVIEW)
+        visual_ms: list[int] = []
         for img in images:
+            t0 = time.monotonic()
             printed = await asyncio.to_thread(reader.read_visual, img)
+            visual_ms.append(int((time.monotonic() - t0) * 1000))
             if printed is not None:
-                printed["kycMs"] = printed["duracionMs"] = int((time.monotonic() - started) * 1000)
+                ms = printed["kycMs"] = printed["duracionMs"] = int(
+                    (time.monotonic() - started) * 1000
+                )
+                log.info(
+                    "leer: fotos=%d %s mrz_ms=%s visual_ms=%s total_ms=%d resultado=ocr",
+                    len(images),
+                    [f"{i.shape[1]}x{i.shape[0]}" for i in images],
+                    mrz_ms,
+                    visual_ms,
+                    ms,
+                )
                 return printed
         ms = int((time.monotonic() - started) * 1000)
+        log.info(
+            "leer: fotos=%d %s mrz_ms=%s visual_ms=%s total_ms=%d resultado=no_legible",
+            len(images),
+            [f"{i.shape[1]}x{i.shape[0]}" for i in images],
+            mrz_ms,
+            visual_ms,
+            ms,
+        )
         hint = "sin_mrz" if card_seen else "no_legible"
         message = (
             "No se leyo la MRZ: de la vuelta a la tarjeta o mejore la luz y el enfoque"
@@ -414,6 +447,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
 
     app.state.camera = camera
+    app.state.reader = reader
     return app
 
 
@@ -452,9 +486,12 @@ def _lower_priority() -> None:
 
 def main() -> None:
     settings = Settings()
-    _lower_priority()
+    if settings.low_priority:
+        _lower_priority()
     logging.basicConfig(level=logging.INFO)
     app = create_app(settings)
+    # Cargar los modelos ahora y no con la primera foto del visitante (en un equipo lento tarda).
+    threading.Thread(target=app.state.reader.warm_up, name="warm-up", daemon=True).start()
     try:
         make_server(app, settings).run()
     except KeyboardInterrupt:

@@ -7,6 +7,7 @@ Ademas de los datos, devuelve la geometria de lo detectado (para dibujarlo y dep
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,8 @@ from servicio_mrz import cardfinder, celldecode, mrzread, visual
 from servicio_mrz.mrz import MrzResult, parse_mrz
 from servicio_mrz.mrzread import Observation
 from servicio_mrz.textclean import clean_row
+
+log = logging.getLogger("servicio_mrz")
 
 _MAX_SIDE = 1600
 _MIN_ROW = 20  # largo minimo para intentar parsear una fila
@@ -225,6 +228,17 @@ class MrzReader:
             ys = [p[1] for p in points]
             boxes.append(_Box(min(xs), min(ys), max(xs), max(ys), text))
         return boxes
+
+    def warm_up(self) -> None:
+        """Carga los modelos y hace una inferencia de prueba: la primera foto real no la paga."""
+        started = time.monotonic()
+        try:
+            blank = np.full((480, 720, 3), 200, np.uint8)
+            self.read_detailed(blank, budget_s=1.0)
+            self.read_visual(blank)
+            log.info("Modelos listos en %.1f s", time.monotonic() - started)
+        except Exception:  # noqa: BLE001 - el calentamiento nunca debe tumbar el servicio
+            log.warning("No se pudo calentar los modelos (se cargaran con la primera foto)")
 
     def read_visual(self, img: np.ndarray) -> dict | None:
         """Campos IMPRESOS (OCR por etiqueta): respaldo cuando no hay MRZ legible (~1.7 s)."""
