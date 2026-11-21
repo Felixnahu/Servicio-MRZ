@@ -49,7 +49,6 @@ from servicio_mrz.testpage import PAGE
 log = logging.getLogger("servicio_mrz")
 
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
-SECOND_PHOTO_MAX_S = 10.0
 OLD_CI_MIN_S = 10.0  # trabajo minimo que se da al OCR del carnet antiguo
 KYC_MIN_S = 5.0  # margen minimo que debe quedar para consultar el KYC
 MAX_UPLOAD = 10 * 1024 * 1024
@@ -348,7 +347,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (misma pagina, otra captura) y gasto mucho tiempo.
         order = [images[1], images[0]] if len(images) == 2 else list(images)
         for img in order:
-            if mrz_ms and mrz_seen and time.monotonic() - started >= SECOND_PHOTO_MAX_S:
+            # Nunca se descarta una foto por "haber visto una MRZ": esa senal es poco fiable (hay
+            # carnets antiguos que la disparan) y la MRZ puede estar en cualquiera de las dos. Solo
+            # se corta si ya no queda tiempo para los respaldos.
+            if mrz_ms and time.monotonic() - started >= settings.request_deadline_s - 15:
                 break
             t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)

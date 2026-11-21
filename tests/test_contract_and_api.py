@@ -430,14 +430,13 @@ def test_failed_photos_are_saved_only_when_asked(monkeypatch, tmp_path):
     assert len(list((tmp_path / "fallidas").glob("*.jpg"))) == 2
 
 
-def test_second_photo_is_skipped_only_if_the_first_already_showed_an_mrz(monkeypatch):
-    """La 2a foto se salta si la 1a ya mostro una MRZ (misma pagina) y gasto tiempo; si la 1a no
-    mostro ninguna, la MRZ puede estar en la 2a y SIEMPRE se mira."""
+def test_both_photos_are_always_read_when_the_first_gives_no_result(monkeypatch):
+    """"Vi una MRZ" no basta para descartar la otra foto: la senal es poco fiable y la MRZ puede
+    estar en cualquiera de las dos. Solo se corta si ya no queda tiempo para los respaldos."""
     import time
 
     import numpy as np
 
-    from servicio_mrz import app as app_module
     from servicio_mrz.mrzread import Observation
     from servicio_mrz.ocr import MrzReader, Reading
 
@@ -453,12 +452,11 @@ def test_second_photo_is_skipped_only_if_the_first_already_showed_an_mrz(monkeyp
 
         return slow
 
-    monkeypatch.setattr(app_module, "SECOND_PHOTO_MAX_S", 0.1)
     blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
     files = {"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
     for reading, doc_type, expected in (
-        (with_mrz, "PASSPORT", 1),
-        (with_mrz, "CI_BO", 1),
+        (with_mrz, "PASSPORT", 2),
+        (with_mrz, "CI_BO", 2),
         (without_mrz, "PASSPORT", 2),
         (without_mrz, "CI_BO", 2),
     ):
