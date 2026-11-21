@@ -435,7 +435,7 @@ def test_passport_skips_the_second_photo_when_the_first_was_slow(monkeypatch):
     monkeypatch.setattr(app_module, "SECOND_PHOTO_MAX_S", 0.1)
     blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
     files = {"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
-    for doc_type, expected in (("PASSPORT", 1), ("CI_BO", 2)):
+    for doc_type, expected in (("PASSPORT", 1), ("FOREIGN_ID", 2)):
         seen.clear()
         settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
         with TestClient(create_app(settings)) as c:
@@ -464,3 +464,27 @@ def test_a_two_line_mrz_seen_locally_blocks_the_kyc_even_without_the_type(monkey
     with client as c:
         res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
     assert res.status_code == 422 and calls == []
+
+
+def test_ci_tries_only_the_back_locally_and_then_goes_to_the_kyc(monkeypatch):
+    """CI_BO con dos fotos: la MRZ solo esta en el reverso; si no se lee, no se gasta otro intento
+    local con el anverso (en el totem cada intento cuesta ~10 s) y se pasa al KYC."""
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    seen = []
+    with_text = Reading(None, rows=(1, 2))
+    client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
+
+    def count(self, img, *a, **k):
+        seen.append(1)
+        return with_text
+
+    monkeypatch.setattr(MrzReader, "read_detailed", count)
+    files = {"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
+    with client as c:
+        res = c.post("/mrz/leer", data={"documentType": "CI_BO"}, files=files)
+    assert res.status_code == 200 and len(seen) == 1 and len(calls) == 1
+    seen.clear()
+    with client as c:  # tipo desconocido: se mantienen los dos intentos
+        c.post("/mrz/leer", data={"documentType": "FOREIGN_ID"}, files=files)
+    assert len(seen) == 2

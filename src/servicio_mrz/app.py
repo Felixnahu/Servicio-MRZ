@@ -336,10 +336,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
         # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
         is_passport = (documentType or "").upper() == "PASSPORT"
+        is_ci = (documentType or "").strip().upper() == "CI_BO"
         for img in reversed(images) if len(images) == 2 else images:
             # Un pasaporte llega como dos capturas de la MISMA pagina: si la primera ya costo
             # varios segundos sin leer, la segunda casi seguro tampoco y solo suma espera.
             if mrz_ms and is_passport and time.monotonic() - started >= SECOND_PHOTO_MAX_S:
+                break
+            # Cedula (CI_BO): la MRZ solo esta en el reverso, que ya se probo primero. Si no se
+            # leyo, el anverso no la tiene: directo al KYC, sin gastar otro intento local.
+            if mrz_ms and is_ci:
                 break
             t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)
