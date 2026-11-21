@@ -48,7 +48,7 @@ from servicio_mrz.testpage import PAGE
 
 log = logging.getLogger("servicio_mrz")
 
-# Pasaporte: si la 1a foto ya gasto este tiempo sin leer, no se intenta la 2a (misma pagina).
+# Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
 SECOND_PHOTO_MAX_S = 6.0
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
@@ -333,18 +333,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         card_seen = False
         mrz_seen = False  # alguna foto mostro una MRZ (aunque no se leyo): no es carnet antiguo
         mrz_ms: list[int] = []
-        # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
-        # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
+        # La app SIEMPRE manda dos fotos ("frente" y "reverso") y el tipo sale de la categoria de
+        # la entrada, no de lo que el visitante muestra. Donde esta la MRZ depende del documento:
+        #  - cedula 2023: en el reverso (2a foto);
+        #  - pasaporte: en la pagina de datos, que el visitante suele dar como 1a foto.
+        # Por eso el orden es solo una preferencia y NUNCA se descarta una foto sin mirarla: la 2a
+        # se salta solo si la 1a ya mostro una MRZ (misma pagina, otra captura) y gasto tiempo.
         is_passport = (documentType or "").upper() == "PASSPORT"
-        is_ci = (documentType or "").strip().upper() == "CI_BO"
-        for img in reversed(images) if len(images) == 2 else images:
-            # Un pasaporte llega como dos capturas de la MISMA pagina: si la primera ya costo
-            # varios segundos sin leer, la segunda casi seguro tampoco y solo suma espera.
-            if mrz_ms and is_passport and time.monotonic() - started >= SECOND_PHOTO_MAX_S:
-                break
-            # Cedula (CI_BO): la MRZ solo esta en el reverso, que ya se probo primero. Si no se
-            # leyo, el anverso no la tiene: directo al KYC, sin gastar otro intento local.
-            if mrz_ms and is_ci:
+        order = (
+            [images[1], images[0]] if len(images) == 2 and not is_passport else list(images)
+        )
+        for img in order:
+            if mrz_ms and mrz_seen and time.monotonic() - started >= SECOND_PHOTO_MAX_S:
                 break
             t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)

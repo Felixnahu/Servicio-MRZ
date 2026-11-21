@@ -416,32 +416,44 @@ def test_failed_photos_are_saved_only_when_asked(monkeypatch, tmp_path):
     assert len(list((tmp_path / "fallidas").glob("*.jpg"))) == 2
 
 
-def test_passport_skips_the_second_photo_when_the_first_was_slow(monkeypatch):
+def test_second_photo_is_skipped_only_if_the_first_already_showed_an_mrz(monkeypatch):
+    """La 2a foto se salta si la 1a ya mostro una MRZ (misma pagina) y gasto tiempo; si la 1a no
+    mostro ninguna, la MRZ puede estar en la 2a y SIEMPRE se mira."""
     import time
 
     import numpy as np
 
     from servicio_mrz import app as app_module
+    from servicio_mrz.mrzread import Observation
     from servicio_mrz.ocr import MrzReader, Reading
 
     seen = []
+    with_mrz = Reading(None, rows=(1, 2), observation=Observation(2, (np.zeros((44, 3)),), 0.9))
+    without_mrz = Reading(None, rows=(1, 2))
 
-    def slow(self, img, *a, **k):
-        seen.append(1)
-        time.sleep(0.3)
-        return Reading(None)
+    def make(reading):
+        def slow(self, img, *a, **k):
+            seen.append(1)
+            time.sleep(0.3)
+            return reading
 
-    monkeypatch.setattr(MrzReader, "read_detailed", slow)
+        return slow
+
     monkeypatch.setattr(app_module, "SECOND_PHOTO_MAX_S", 0.1)
     blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
     files = {"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
-    for doc_type, expected in (("PASSPORT", 1), ("FOREIGN_ID", 2)):
+    for reading, doc_type, expected in (
+        (with_mrz, "PASSPORT", 1),
+        (with_mrz, "CI_BO", 1),
+        (without_mrz, "PASSPORT", 2),
+        (without_mrz, "CI_BO", 2),
+    ):
         seen.clear()
+        monkeypatch.setattr(MrzReader, "read_detailed", make(reading))
         settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
         with TestClient(create_app(settings)) as c:
             c.post("/mrz/leer", data={"documentType": doc_type}, files=files)
-        assert len(seen) == expected
-
+        assert len(seen) == expected, (doc_type, reading is with_mrz)
 
 def test_a_document_without_type_or_with_another_type_still_reaches_the_kyc(monkeypatch):
     """La cedula antigua no debe quedar fuera por el tipo: solo se excluyen los pasaportes."""
@@ -470,25 +482,24 @@ def test_a_document_with_an_unreadable_mrz_is_not_sent_to_the_kyc(monkeypatch):
             assert res.status_code == 422 and calls == [], doc_type
 
 
-def test_ci_tries_only_the_back_locally_and_then_goes_to_the_kyc(monkeypatch):
-    """CI_BO con dos fotos: la MRZ solo esta en el reverso; si no se lee, no se gasta otro intento
-    local con el anverso (en el totem cada intento cuesta ~10 s) y se pasa al KYC."""
-    from servicio_mrz.ocr import MrzReader, Reading
+def test_the_mrz_is_found_whichever_photo_and_whatever_type_the_app_sends():
+    """Regresion del totem: el tipo sale de la categoria y el pasaporte va como 1a foto. Con la
+    pagina de datos de un pasaporte en CUALQUIER posicion y con CUALQUIER tipo debe leerse."""
+    import numpy as np
+    import pytest
 
-    seen = []
-    with_text = Reading(None, rows=(1, 2))
-    client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-
-    def count(self, img, *a, **k):
-        seen.append(1)
-        return with_text
-
-    monkeypatch.setattr(MrzReader, "read_detailed", count)
-    files = {"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
-    with client as c:
-        res = c.post("/mrz/leer", data={"documentType": "CI_BO"}, files=files)
-    assert res.status_code == 200 and len(seen) == 1 and len(calls) == 1
-    seen.clear()
-    with client as c:  # tipo desconocido: se mantienen los dos intentos
-        c.post("/mrz/leer", data={"documentType": "FOREIGN_ID"}, files=files)
-    assert len(seen) == 2
+    if not FONT.exists():
+        pytest.skip("requiere la fuente Consolas de Windows")
+    blank = _jpeg(np.full((480, 640, 3), 200, np.uint8))
+    page = _td3_jpeg()
+    for doc_type in ("PASSPORT", "CI_BO", "FOREIGN_ID", None):
+        for files in (
+            {"front": ("f.jpg", page), "back": ("b.jpg", blank)},
+            {"front": ("f.jpg", blank), "back": ("b.jpg", page)},
+            {"front": ("f.jpg", page), "back": ("b.jpg", page)},
+        ):
+            data = {} if doc_type is None else {"documentType": doc_type}
+            with _client() as c:
+                res = c.post("/mrz/leer", data=data, files=files)
+            assert res.status_code == 200, (doc_type, list(files))
+            assert res.json()["fields"]["documentNumber"] == "L898902C"
