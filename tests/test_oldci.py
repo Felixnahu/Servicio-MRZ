@@ -130,3 +130,31 @@ def test_old_ci_reader_stops_at_the_deadline():
 
     img = np.full((400, 600, 3), 200, np.uint8)
     assert oldci.read_old_ci(Boom(), [img, img], deadline=time.monotonic() - 1) is None
+
+
+def test_kyc_is_skipped_when_no_time_is_left(monkeypatch):
+    """Sin margen antes del corte de la app, esperar al KYC solo alarga el error."""
+    import cv2
+
+    from servicio_mrz import kyc_client
+
+    calls = []
+
+    async def fake(settings, front, back=None):
+        calls.append(1)
+        return {"source": "external"}
+
+    monkeypatch.setattr(kyc_client, "read_document", fake)
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, deadline=None: None)
+    ok, buf = cv2.imencode(".jpg", np.full((400, 600, 3), 200, np.uint8))
+    settings = Settings(
+        camera_enabled=False,
+        visual_ocr=False,
+        kyc_base_url="https://kyc.invalid",
+        request_deadline_s=0.5,
+        _env_file=None,
+    )
+    with TestClient(create_app(settings)) as c:
+        res = c.post("/mrz/leer", files={"front": ("f.jpg", buf.tobytes())})
+    assert res.status_code == 422 and calls == []

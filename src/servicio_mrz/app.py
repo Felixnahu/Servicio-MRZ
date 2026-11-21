@@ -51,6 +51,7 @@ log = logging.getLogger("servicio_mrz")
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
 SECOND_PHOTO_MAX_S = 10.0
 OLD_CI_MIN_S = 10.0  # trabajo minimo que se da al OCR del carnet antiguo
+KYC_MIN_S = 5.0  # margen minimo que debe quedar para consultar el KYC
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
 STREAM_WIDTH = 960
@@ -338,7 +339,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started = time.monotonic()
         card_seen = False
         mrz_seen = False  # alguna foto mostro una MRZ (aunque no se leyo): no es carnet antiguo
-        mrz_ms: list[int] = []
+        mrz_ms: list[str] = []  # una entrada por foto leida (solo tiempos y forma, nunca datos)
         passport_shaped = False  # alguna tarjeta localizada mide menos de 1.47 de proporcion
         # La app SIEMPRE manda dos fotos ("frente" y "reverso") y NO dice que documento es: el tipo
         # se deduce de lo que se ve. Donde esta la MRZ depende del documento (cedula 2023: reverso;
@@ -351,7 +352,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 break
             t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)
-            mrz_ms.append(int((time.monotonic() - t0) * 1000))
+            # Para el log: tiempo, por donde se leyo (tarjeta localizada o OCR de todo el cuadro,
+            # que es lo lento), proporcion de la tarjeta y si se vio texto con forma de MRZ.
+            mrz_ms.append(
+                f"{int((time.monotonic() - t0) * 1000)}ms "
+                + (f"tarjeta:{reading.card_aspect:.2f}" if reading.card else "cuadro")
+                + (" mrz" if reading.observation is not None else "")
+            )
             if reading.checks_ok and reading.result is not None:
                 ms = int((time.monotonic() - started) * 1000)
                 # Solo tiempos y tamanos: nunca valores del documento.
@@ -436,7 +443,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (comprobado en el totem) y un documento con MRZ que aqui no se pudo leer (pasaporte o
         # cedula 2023) necesita otra foto, no el KYC. "Tiene MRZ" = la lectura local vio texto
         # con estructura de MRZ (medido: ninguna foto sin MRZ lo mostro, todos los pasaportes si).
-        if settings.kyc_fallback and settings.kyc_base_url and not (passport_like or mrz_seen):
+        time_left = settings.request_deadline_s - (time.monotonic() - started)
+        if (
+            settings.kyc_fallback
+            and settings.kyc_base_url
+            and not (passport_like or mrz_seen)
+            and time_left >= KYC_MIN_S  # sin margen la llamada no puede acabar antes del corte
+        ):
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
             remaining = settings.request_deadline_s - (time.monotonic() - started)

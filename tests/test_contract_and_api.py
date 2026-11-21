@@ -379,7 +379,7 @@ def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
         camera_enabled=False,
         visual_ocr=False,
         kyc_base_url="https://kyc.invalid",
-        request_deadline_s=1.0,  # el minimo de espera al KYC es 5 s
+        request_deadline_s=7.0,  # con menos de KYC_MIN_S (5 s) de margen ni se consulta
         _env_file=None,
     )
     blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
