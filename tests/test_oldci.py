@@ -49,6 +49,13 @@ def test_back_still_reads_when_ocr_mangles_the_labels():
     assert got.full_name == "MARIA LUISA TORRES QUISPE"
 
 
+def test_back_reads_month_when_final_o_is_seen_as_zero():
+    got = oldci.parse_back(
+        _back_boxes(born="Nacido el 31de Marz0 de 2003"), W, today=date(2026, 11, 21)
+    )
+    assert got is not None and got.born == date(2003, 3, 31)
+
+
 def test_a_name_glued_to_the_label_loses_the_label():
     got = oldci.parse_back(_back_boxes(name="A: MARIA LUISA TORRES QUISPE"), W, date(2026, 11, 21))
     assert got is not None and got.full_name == "MARIA LUISA TORRES QUISPE"
@@ -172,6 +179,26 @@ def test_old_ci_reader_stops_at_the_deadline():
 
     img = np.full((400, 600, 3), 200, np.uint8)
     assert oldci.read_old_ci(Boom(), [img, img], deadline=time.monotonic() - 1) is None
+
+
+def test_old_ci_reader_reads_required_back_before_optional_front(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(oldci.visual, "_prepare", lambda img: img)
+
+    def fake_back(engine, card):
+        calls.append("back")
+        return oldci.OldCiRead(born=date(1985, 3, 15), full_name="MARIA LUISA TORRES QUISPE")
+
+    monkeypatch.setattr(oldci, "_back", fake_back)
+    monkeypatch.setattr(
+        oldci, "_front_number", lambda engine, card: calls.append("front") or "1234567"
+    )
+    img = np.full((400, 600, 3), 200, np.uint8)
+    result = oldci.read_old_ci(object(), [img, img])
+    assert result is not None and result["fields"]["birthDate"] == "1985-03-15"
+    assert result["fields"]["documentNumber"] == "1234567"
+    assert calls == ["back", "front"]
 
 
 def test_kyc_is_skipped_when_no_time_is_left(monkeypatch):

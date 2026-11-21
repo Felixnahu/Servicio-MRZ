@@ -8,10 +8,11 @@ barras y la de 2020 un QR en el anverso. Los datos estan repartidos entre las do
 
 Estrategia (medida en 12 fotos de las dos versiones, ver tests/measure_old_ci.py):
 
-1. Se recorta la zona del numero del anverso y se lee solo eso (rapido, ~0.5 s en un PC rapido).
-2. El reverso se lee entero: recortar una banda con el nombre y la fecha daba peores resultados
+1. El reverso se lee entero: recortar una banda con el nombre y la fecha daba peores resultados
    que la tarjeta completa (la fecha fallaba en 2 de 5). Se parsea por patron de fecha, no por
    etiqueta: el OCR deforma "Nacido" y "CERTIFICA" a menudo.
+2. Si se obtiene la fecha y queda tiempo, se recorta la zona del numero del anverso. El numero es
+   opcional y no debe consumir el plazo antes de leer el reverso.
 
 Igual que el OCR de campos impresos, NO hay digitos de control: el resultado va marcado `REVIEW` y
 solo se devuelve si se leyo una fecha de nacimiento real. El numero se lee en ~60 % de los
@@ -73,7 +74,10 @@ def parse_back(boxes: list[Box], width: float, today: date | None = None) -> Old
         return None
     dated = []
     for b in boxes:
-        born = visual.parse_date(b.text, today)
+        # En el mes escrito con letras, RapidOCR puede leer la O final como cero ("Marz0").
+        # Se corrige solo ese caso; los digitos del dia y del ano permanecen intactos.
+        date_text = re.sub(r"(?<=[A-Za-z])0\b", "O", b.text)
+        born = visual.parse_date(date_text, today)
         if born is not None and born.year >= _MIN_YEAR:
             dated.append((b, born))
     if not dated:
@@ -152,22 +156,12 @@ def read_old_ci(
             break
         cards.append(visual._prepare(img))
     total = OldCiRead()
-    # 1.a pasada (barata): el numero del anverso. Una cara con numero legible es el anverso.
-    front_idx: set[int] = set()
-    for i, card in enumerate(cards):
-        if late():
-            break
-        number = _front_number(engine, card)
-        if number:
-            total.number = total.number or number
-            front_idx.add(i)
-    # 2.a pasada: la fecha y el nombre, del reverso. Se prueba primero la ultima foto (la app pide
-    # el reverso en 2.o lugar); la tarjeta puede estar boca abajo.
+    # La fecha del reverso es obligatoria; buscar antes el numero opcional agotaba el plazo en el
+    # totem. Se prueba primero la ultima foto (la app pide el reverso en 2.o lugar).
+    back_idx = None
     for i in reversed(range(len(cards))):
         if total.born is not None:
             break
-        if i in front_idx:
-            continue
         if late():
             break
         part = _back(engine, cards[i])
@@ -175,8 +169,16 @@ def read_old_ci(
             part = _back(engine, cv2.rotate(cards[i], cv2.ROTATE_180))
         if part is not None:
             total.merge(part)
+            back_idx = i
     if total.born is None:
         return None
+    # El numero se lee solo si queda margen y nunca de la cara ya reconocida como reverso.
+    for i, card in enumerate(cards):
+        if i == back_idx or late():
+            continue
+        total.number = _front_number(engine, card)
+        if total.number:
+            break
     words = total.full_name.split()
     cut = max(len(words) - 2, 1) if len(words) > 1 else len(words)  # 2 ultimos = apellidos
     return visual._result(
