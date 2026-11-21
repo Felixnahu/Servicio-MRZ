@@ -88,7 +88,11 @@ async def _upload(file: UploadFile) -> bytes:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     camera = Camera(settings.camera_index, settings.camera_width, settings.camera_height)
-    reader = MrzReader(threads=settings.ocr_threads, budget_s=settings.ocr_budget_s)
+    reader = MrzReader(
+        threads=settings.ocr_threads,
+        budget_s=settings.ocr_budget_s,
+        mem_arena=settings.ocr_mem_arena,
+    )
     calibrator = Calibrator(camera, reader, Path(settings.data_dir) / "calibracion")
     hub = Hub()
 
@@ -367,6 +371,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             card_seen = card_seen or looks_id1
         if settings.save_failed_photos:
             await asyncio.to_thread(_save_failed, Path(settings.data_dir) / "fallidas", raws)
+        # Cedula antigua (sin MRZ): lectura local por plantilla (nombre y fecha del reverso, numero
+        # del anverso). Solo si ninguna foto mostro una MRZ y no es un pasaporte.
+        if settings.old_ci_ocr and not mrz_seen and not is_passport:
+            t0 = time.monotonic()
+            old = await asyncio.to_thread(reader.read_old_ci, images)
+            ms = int((time.monotonic() - started) * 1000)
+            log.info(
+                "leer: fotos=%d mrz_ms=%s carnet_antiguo_ms=%d total_ms=%d resultado=%s",
+                len(images), mrz_ms, int((time.monotonic() - t0) * 1000), ms,
+                "ocr_carnet_antiguo" if old else "carnet_antiguo_no_leido",
+            )
+            if old is not None:
+                old["kycMs"] = old["duracionMs"] = ms
+                return old
         # Sin MRZ legible: campos impresos por OCR (sin digitos de control: va marcado REVIEW)
         visual_ms: list[int] = []
         for img in images if settings.visual_ocr else []:

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # OCR local de campos impresos (~1.7 s en un PC rapido, ~20 s en el totem). En el totem va en
     # false (iniciar.bat) y las cedulas antiguas se resuelven con el KYC.
     visual_ocr: bool = True
+    # Cedula antigua (sin MRZ): lectura local por plantilla antes de recurrir al KYC (~0.8 s por
+    # foto en un PC rapido). Solo actua si ninguna foto mostro una MRZ.
+    old_ci_ocr: bool = True
 
     # Solo loopback: el stream muestra documentos de identidad.
     host: str = "127.0.0.1"
@@ -45,6 +48,9 @@ class Settings(BaseSettings):
     # intento. Es tiempo ABSOLUTO: en un equipo ~5x mas lento (el totem) 2.7 s alcanzan para una
     # sola variante y se pierden lecturas que el mismo codigo logra en un PC rapido.
     ocr_budget_s: float = 2.7
+    # Arena de memoria de ONNX: ~1.75x mas rapido con fotos nuevas (formas de entrada cambiantes) a
+    # cambio de ~1 GB de RAM (se estabiliza en ~1.3 GB en total). false = ~0.45 GB y mas lento.
+    ocr_mem_arena: bool = True
     # Baja la prioridad del proceso para no quitarle CPU a otras aplicaciones (util en un equipo de
     # desarrollo). En el totem (iniciar.bat) va en false: ahi el visitante espera este resultado.
     low_priority: bool = True

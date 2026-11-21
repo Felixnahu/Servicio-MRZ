@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from servicio_mrz import cardfinder, celldecode, mrzread, visual
+from servicio_mrz import cardfinder, celldecode, mrzread, oldci, visual
 from servicio_mrz.mrz import MrzResult, parse_mrz
 from servicio_mrz.mrzread import Observation
 from servicio_mrz.textclean import clean_row
@@ -184,7 +184,29 @@ _STRIP_ASPECT = 3.0  # ancho/alto a partir del cual la imagen se considera ya un
 _NEXT_CANDIDATE_COST = 1.3  # el siguiente candidato cuesta ~1.3x el anterior (medido)
 
 
-def make_engine(threads: int = 0):
+def _enable_memory_arena() -> None:
+    """RapidOCR desactiva el arena de memoria de ONNX (`enable_cpu_mem_arena = False`).
+
+    Con formas de entrada que cambian en cada foto (anchos de linea y de caja distintos) cada
+    inferencia pide memoria nueva al sistema: medido, una tarjeta de carnet tarda 2.8 s sin arena y
+    0.8 s con ella (3.4x), con los mismos resultados. Se activa antes de crear las sesiones.
+    """
+    from rapidocr_onnxruntime.utils import infer_engine
+
+    original = infer_engine.OrtInferSession._init_sess_opts
+    if getattr(original, "_arena_patched", False):
+        return
+
+    def with_arena(config):
+        options = original(config)
+        options.enable_cpu_mem_arena = True
+        return options
+
+    with_arena._arena_patched = True  # type: ignore[attr-defined]
+    infer_engine.OrtInferSession._init_sess_opts = staticmethod(with_arena)
+
+
+def make_engine(threads: int = 0, mem_arena: bool = True):
     """Motor RapidOCR. `threads` > 0 limita los hilos de ONNX (0 = todos los nucleos).
 
     Medido (6 fotos): 1 hilo 2.05 s/foto con ~1.2 nucleos; 2 hilos 1.66 s con ~2.4; 4 hilos 1.20 s
@@ -192,6 +214,8 @@ def make_engine(threads: int = 0):
     """
     from rapidocr_onnxruntime import RapidOCR
 
+    if mem_arena:
+        _enable_memory_arena()
     if threads <= 0:
         return RapidOCR()
     import tempfile
@@ -212,8 +236,11 @@ def make_engine(threads: int = 0):
 
 
 class MrzReader:
-    def __init__(self, threads: int = 0, budget_s: float = DEFAULT_BUDGET_S) -> None:
+    def __init__(
+        self, threads: int = 0, budget_s: float = DEFAULT_BUDGET_S, mem_arena: bool = True
+    ) -> None:
         self._budget_s = budget_s
+        self._mem_arena = mem_arena
         self._engine = None
         self._line_recognizer = None
         self._init_lock = threading.Lock()
@@ -241,6 +268,11 @@ class MrzReader:
         except Exception:  # noqa: BLE001 - el calentamiento nunca debe tumbar el servicio
             log.warning("No se pudo calentar los modelos (se cargaran con la primera foto)")
 
+    def read_old_ci(self, images: list[np.ndarray]) -> dict | None:
+        """Cedula boliviana antigua (sin MRZ) por plantilla: nombre y fecha del reverso, numero del
+        anverso. None si no se lee la fecha de nacimiento."""
+        return oldci.read_old_ci(self._engine_ready(), images)
+
     def read_visual(self, img: np.ndarray) -> dict | None:
         """Campos IMPRESOS (OCR por etiqueta): respaldo cuando no hay MRZ legible (~1.7 s)."""
         return visual.read_image(self._engine_ready(), img)
@@ -266,7 +298,7 @@ class MrzReader:
     def _engine_ready(self):
         with self._init_lock:  # la carga perezosa puede ocurrir desde varios hilos
             if self._engine is None:
-                self._engine = make_engine(self._threads)
+                self._engine = make_engine(self._threads, self._mem_arena)
         return self._engine
 
     def _read_card(self, img: np.ndarray, started: float, deadline: float) -> Reading | None:

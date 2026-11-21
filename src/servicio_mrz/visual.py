@@ -305,9 +305,15 @@ def _with_spaces(text: str, char_boxes: list, chars: list) -> str:
     return "".join(out)
 
 
-def read_boxes(engine: Any, img: np.ndarray) -> tuple[list[Box], float, float]:
-    """OCR general (deteccion + reconocimiento) y cajas de texto en coordenadas de `img`."""
-    result, _ = engine(img, return_word_box=True)
+def read_boxes(
+    engine: Any, img: np.ndarray, use_cls: bool = True
+) -> tuple[list[Box], float, float]:
+    """OCR general (deteccion + reconocimiento) y cajas de texto en coordenadas de `img`.
+
+    `use_cls=False` omite el clasificador de giro de cada caja (texto siempre derecho): con las
+    plantillas fijas da el mismo resultado en ~1/3 del tiempo (medido en carnets antiguos).
+    """
+    result, _ = engine(img, return_word_box=True, use_cls=use_cls)
     boxes = []
     for item in result or []:
         points, text = item[0], item[1]
