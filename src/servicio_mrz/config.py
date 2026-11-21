@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # POST /mrz/leer: si la MRZ no se lee (cedula antigua, reflejos...) se envian las fotos a este
     # KYC para que las lea. Solo actua si KYC_BASE_URL esta configurado.
     kyc_fallback: bool = True
+    # Guarda en data/fallidas las fotos que no se pudieron leer, para medirlas despues. SOLO para
+    # pruebas: son documentos reales; borrar la carpeta al terminar.
+    save_failed_photos: bool = False
     # OCR local de campos impresos (~1.7 s en un PC rapido, ~20 s en el totem). En el totem va en
     # false (iniciar.bat) y las cedulas antiguas se resuelven con el KYC.
     visual_ocr: bool = True

@@ -350,6 +350,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
+        if settings.save_failed_photos:
+            await asyncio.to_thread(_save_failed, Path(settings.data_dir) / "fallidas", raws)
         # Sin MRZ legible: campos impresos por OCR (sin digitos de control: va marcado REVIEW)
         visual_ms: list[int] = []
         for img in images if settings.visual_ocr else []:
@@ -375,7 +377,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return printed
         # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
-        if settings.kyc_fallback and settings.kyc_base_url:
+        # El KYC no reconoce pasaportes (comprobado en el totem): enviarlos solo suma ~40 s de espera
+        # y expone la foto sin ganar nada. Si aqui no se lee, se rechaza de inmediato.
+        is_passport = (documentType or "").upper() == "PASSPORT"
+        if settings.kyc_fallback and settings.kyc_base_url and not is_passport:
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
             remaining = settings.request_deadline_s - (time.monotonic() - started)
@@ -528,6 +533,18 @@ def make_server(app: FastAPI, settings: Settings):
     )
     app.state.server = server
     return server
+
+
+def _save_failed(folder: Path, raws: list[bytes]) -> None:
+    """Guarda las fotos de una lectura fallida para medirlas despues (solo con SAVE_FAILED_PHOTOS).
+
+    Son fotos de documentos reales: quedan solo en este equipo (data/ esta en .gitignore).
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for i, raw in enumerate(raws):
+        (folder / f"{stamp}_{i}.jpg").write_bytes(raw)
+    log.info("leer: %d foto(s) fallida(s) guardadas en %s", len(raws), folder)
 
 
 def _lower_priority() -> None:

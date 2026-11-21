@@ -370,3 +370,36 @@ def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
         res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
     assert res.status_code == 503 and res.json()["codigo"] == "KYC_TIEMPO_AGOTADO"
     assert time.monotonic() - started < 10
+
+
+def test_passports_are_never_sent_to_the_kyc(monkeypatch):
+    client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
+    with client as c:
+        res = c.post(
+            "/mrz/leer",
+            data={"documentType": "PASSPORT"},
+            files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)},
+        )
+    assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
+    assert calls == []
+
+
+def test_failed_photos_are_saved_only_when_asked(monkeypatch, tmp_path):
+    import numpy as np
+
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
+
+    def post(save: bool):
+        settings = Settings(
+            camera_enabled=False, visual_ocr=False, save_failed_photos=save,
+            data_dir=str(tmp_path), _env_file=None,
+        )
+        with TestClient(create_app(settings)) as c:
+            return c.post("/mrz/leer", files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)})
+
+    assert post(False).status_code == 422 and not (tmp_path / "fallidas").exists()
+    assert post(True).status_code == 422
+    assert len(list((tmp_path / "fallidas").glob("*.jpg"))) == 2
