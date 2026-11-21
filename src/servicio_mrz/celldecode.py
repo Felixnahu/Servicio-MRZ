@@ -170,13 +170,15 @@ def decode_lines(
     x_right: float,
     x_left: float | None = None,
     with_elastic: bool = False,
-) -> tuple[list[Decoded], float, list[Decoded] | None]:
+) -> tuple[list[Decoded], float, list[list[Decoded]]]:
     """Decodifica las lineas (y0, y1) con la rejilla que mejor explica al reconocedor.
 
-    Devuelve (lineas, paso, alternativa). Con `with_elastic` la alternativa es la misma lectura
-    con una rejilla elastica: cada celda puede variar un poco de ancho (pagina curva de un
-    pasaporte: la escala horizontal no es constante), alineada por programacion dinamica y anclada
-    a la rejilla uniforme. Solo se usa si la uniforme no valida (con ella sola la cedula empeora).
+    Devuelve (lineas, paso, alternativas). Con `with_elastic` las alternativas son la misma lectura
+    con otras alineaciones, que solo se usan si la uniforme no valida los controles:
+    1. por picos del reconocedor: cada caracter que el modelo emite es una celda (si el numero de
+       caracteres emitidos coincide con el de celdas); no depende de ninguna rejilla;
+    2. rejilla elastica: cada celda puede variar un poco de ancho (pagina curva de un pasaporte),
+       alineada por programacion dinamica y anclada a la rejilla uniforme.
 
     El paso de caracter y el borde derecho son comunes a todas las lineas. Busqueda en dos fases:
     primero el desplazamiento horizontal con el paso nominal, luego el paso con ese desplazamiento.
@@ -225,12 +227,46 @@ def decode_lines(
     uniform = [
         _decode_cells(lp, layouts[i], right, float(pitch)) for i, lp in enumerate(line_probs)
     ]
-    alt = (
-        [_decode_elastic(lp, layouts[i], right, float(pitch)) for i, lp in enumerate(line_probs)]
-        if with_elastic
-        else None
-    )
-    return uniform, float(pitch), alt
+    alternatives: list[list[Decoded]] = []
+    if with_elastic:
+        by_peaks = [
+            _decode_peaks(recognizer, lp, layouts[i]) or uniform[i]
+            for i, lp in enumerate(line_probs)
+        ]
+        alternatives.append(by_peaks)
+        alternatives.append(
+            [
+                _decode_elastic(lp, layouts[i], right, float(pitch))
+                for i, lp in enumerate(line_probs)
+            ]
+        )
+    return uniform, float(pitch), alternatives
+
+
+def _decode_peaks(recognizer: LineRecognizer, lp: _LineProbs, layout: str) -> Decoded | None:
+    """Una celda por caracter emitido por el modelo (None si no hay tantos como celdas)."""
+    best = lp.probs.argmax(axis=1)
+    runs: list[tuple[int, int]] = []  # [inicio, fin) de cada emision no vacia
+    start = None
+    for t in range(len(best) + 1):
+        cur = int(best[t]) if t < len(best) else 0
+        prev = int(best[t - 1]) if t > 0 else 0
+        if start is not None and (cur != prev or cur == recognizer._blank):
+            runs.append((start, t))
+            start = None
+        if start is None and cur != recognizer._blank and t < len(best):
+            start = t
+    if len(runs) != len(layout):
+        return None
+    mask = _mask(layout)
+    scores = np.zeros((len(layout), len(ALPHABET)), np.float32)
+    for c, (a, b) in enumerate(runs):
+        window = lp.alpha[max(0, a - 1) : min(len(lp.probs), b + 1)].max(axis=0) * mask[c]
+        scores[c] = window / max(float(window.sum()), 1e-9)
+    chosen = scores.argmax(axis=1)
+    text = "".join(ALPHABET[i] for i in chosen)
+    confidences = scores[np.arange(len(layout)), chosen]
+    return Decoded(text, float(confidences.mean()), tuple(scores.astype(np.float64)))
 
 
 # --- rejilla elastica ---------------------------------------------------------------------------

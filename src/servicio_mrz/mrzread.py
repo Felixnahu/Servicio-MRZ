@@ -149,7 +149,7 @@ def _read_variant(
         # tiene mas texto encima de la MRZ y su mediana puede caer fuera del rango de busqueda)
         x_right = float(np.median([s.x1 for s in lines])) + 6
         x_left = float(np.median([s.x0 for s in lines])) - 2
-        decoded, _, alt = celldecode.decode_lines(
+        decoded, _, alternatives = celldecode.decode_lines(
             recognizer,
             card,
             [(s.y0, s.y1) for s in lines],
@@ -174,9 +174,11 @@ def _read_variant(
             [d.text for d in decoded], [np.stack(d.scores) for d in decoded], count
         )
         result = parse_mrz(texts)
-        if alt is not None and not (result and result.core_checks_ok):
-            # rejilla uniforme sin validar: probar la elastica (paginas curvas) y quedarse con ella
-            # solo si valida los controles
+        for alt in alternatives:
+            if result and result.core_checks_ok:
+                break
+            # rejilla uniforme sin validar: probar las alineaciones alternativas (picos del modelo,
+            # rejilla elastica) y quedarse con una solo si valida los controles
             texts_alt = celldecode.snap_fields(
                 [d.text for d in alt], [np.stack(d.scores) for d in alt], count
             )

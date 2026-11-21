@@ -83,3 +83,28 @@ def test_elastic_grid_equals_the_uniform_one_when_the_scale_is_constant():
     layout = LAYOUTS[2][1]
     lp = _peaks(TD3_LINE2, [20.5] * 44, start=70.0)
     assert celldecode._decode_elastic(lp, layout, 70.0 + 44 * 20.5, 20.5).text == TD3_LINE2
+
+
+def test_peaks_alignment_reads_one_cell_per_emitted_character():
+    """Cuando el modelo emite tantos caracteres como celdas, cada pico es una celda, aunque la
+    escala cambie a lo largo de la linea y sin ninguna rejilla."""
+    layout = LAYOUTS[2][1]
+    widths = [float(w) for w in np.linspace(17.0, 25.0, 44)]
+    steps = 256
+    px_per_step = 1100 / steps
+    probs = np.zeros((steps, 1 + len(ALPHABET)), np.float32)  # clase 0 = vacio (CTC)
+    probs[:, 0] = 1.0
+    x = 60.0
+    for ch, w in zip(TD3_LINE2, widths, strict=True):
+        t = int((x + w / 2) / px_per_step)
+        probs[t, 0], probs[t, 1 + ALPHABET.index(ch)] = 0.0, 1.0
+        x += w
+    alpha = np.vstack([probs[:, 1:], np.zeros((1, len(ALPHABET)), probs.dtype)])
+    lp = _LineProbs(probs, xa=0, px_per_step=px_per_step, alpha=alpha)
+
+    class FakeRecognizer:
+        _blank = 0
+
+    got = celldecode._decode_peaks(FakeRecognizer(), lp, layout)
+    assert got is not None and got.text == TD3_LINE2
+    assert celldecode._decode_peaks(FakeRecognizer(), lp, layout[:-1]) is None  # nº distinto
