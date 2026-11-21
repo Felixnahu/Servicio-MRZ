@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # false (iniciar.bat) y las cedulas antiguas se resuelven con el KYC.
     visual_ocr: bool = True
     # Cedula antigua (sin MRZ): lectura local por plantilla antes de recurrir al KYC (~0.8 s por
-    # foto en un PC rapido). Solo actua si ninguna foto mostro una MRZ.
+    # foto en un PC rapido). Una observacion MRZ falsa no impide probar esta plantilla.
     old_ci_ocr: bool = True
     # Tope (segundos desde que llega la peticion) del OCR del carnet antiguo.
     old_ci_deadline_s: float = 28.0

@@ -59,6 +59,24 @@ def test_back_without_a_valid_date_is_not_a_read():
     assert oldci.parse_back([_b(0.1, 0.3, "DOMICILIO AV. CENTENARIO")], W) is None
 
 
+def test_back_rejects_passport_date_without_old_ci_text():
+    boxes = [
+        _b(0.1, 0.03, "ESTADO PLURINACIONAL DE BOLIVIA"),
+        _b(0.2, 0.25, "JUAN PABLO SALINAS SALEK"),
+        _b(0.2, 0.38, "08/DIC/1988"),
+    ]
+    assert oldci.parse_back(boxes, W) is None
+
+
+def test_back_rejects_new_ci_front_even_with_servicio_general_heading():
+    boxes = [
+        _b(0.1, 0.03, "SERVICIO GENERAL DE IDENTIFICACION PERSONAL"),
+        _b(0.4, 0.30, "NOMBRES: ALVARO"),
+        _b(0.4, 0.40, "FECHA DE NACIMIENTO: 26/02/1987"),
+    ]
+    assert oldci.parse_back(boxes, W) is None
+
+
 @pytest.mark.parametrize(
     ("texts", "expected"),
     [
@@ -75,6 +93,24 @@ def test_front_number(texts, expected):
     assert oldci.parse_front_number(boxes) == expected
 
 
+def test_front_number_retries_color_only_when_number_label_is_seen(monkeypatch):
+    calls = []
+
+    def fake_boxes(engine, image, use_cls=False):
+        calls.append(image)
+        boxes = [_b(0.05, 0.66, "No.")] if len(calls) == 1 else [_b(0.05, 0.66, "1234567")]
+        return boxes, image.shape[1], image.shape[0]
+
+    monkeypatch.setattr(oldci.visual, "read_boxes", fake_boxes)
+    card = np.full((400, 600, 3), 200, np.uint8)
+    assert oldci._front_number(object(), card) == "1234567"
+    assert len(calls) == 2
+
+    calls.clear()
+    monkeypatch.setattr(oldci.visual, "read_boxes", lambda *args, **kwargs: ([], 600, 400))
+    assert oldci._front_number(object(), card) == ""
+
+
 def test_endpoint_uses_the_local_old_ci_reader_before_the_kyc(monkeypatch):
     import cv2
 
@@ -84,7 +120,12 @@ def test_endpoint_uses_the_local_old_ci_reader_before_the_kyc(monkeypatch):
         calls.append(len(images))
         return {"documentType": "CI_BO", "fields": {"birthDate": "1985-03-15"}, "source": "ocr"}
 
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    corners = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
+    aspects = iter((1.44, 1.46))
+    monkeypatch.setattr(
+        MrzReader, "read_detailed",
+        lambda self, img, *a, **k: Reading(None, card=corners, card_aspect=next(aspects)),
+    )
     monkeypatch.setattr(MrzReader, "read_old_ci", fake_old)
     ok, buf = cv2.imencode(".jpg", np.full((400, 600, 3), 200, np.uint8))
     files = {"front": ("f.jpg", buf.tobytes()), "back": ("b.jpg", buf.tobytes())}
@@ -95,7 +136,7 @@ def test_endpoint_uses_the_local_old_ci_reader_before_the_kyc(monkeypatch):
     assert "duracionMs" in res.json()
 
 
-def test_old_ci_reader_is_skipped_for_passports_and_when_an_mrz_was_seen(monkeypatch):
+def test_old_ci_reader_is_tried_for_ambiguous_shape_and_false_mrz_observation(monkeypatch):
     import cv2
 
     from servicio_mrz.mrzread import Observation
@@ -107,17 +148,18 @@ def test_old_ci_reader_is_skipped_for_passports_and_when_an_mrz_was_seen(monkeyp
     settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
 
     corners = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
-    passport = Reading(None, card=corners, card_aspect=1.40)  # proporcion de pasaporte
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: passport)
+    ambiguous = Reading(None, card=corners, card_aspect=1.40)
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: ambiguous)
     with TestClient(create_app(settings)) as c:
-        c.post("/mrz/leer", files=files)  # la app no manda el tipo: se deduce de la forma
-    assert calls == []
+        c.post("/mrz/leer", files=files)  # proporciones de cedula antigua pueden ser 1.44
+    assert calls == [1]
 
+    calls.clear()
     seen = Reading(None, observation=Observation(2, (np.zeros((44, 3)),), 0.9))
     monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: seen)
     with TestClient(create_app(settings)) as c:
         c.post("/mrz/leer", data={"documentType": "CI_BO"}, files=files)
-    assert calls == []
+    assert calls == [1]
 
 
 def test_old_ci_reader_stops_at_the_deadline():

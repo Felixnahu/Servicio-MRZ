@@ -63,6 +63,14 @@ def _strip_label(text: str) -> str:
 
 def parse_back(boxes: list[Box], width: float, today: date | None = None) -> OldCiRead | None:
     """Nombre y fecha de nacimiento del reverso a partir de las cajas de la tarjeta."""
+    # La lectura puede probarse tambien en una pagina de pasaporte sin MRZ detectada. Exigir una
+    # senal propia del reverso antiguo evita tomar su fecha de nacimiento como carnet antiguo.
+    keys = [visual._key(b.text) for b in boxes]
+    if not any(
+        "CERTIF" in key or "NACID" in key or "NACLD" in key
+        for key in keys
+    ):
+        return None
     dated = []
     for b in boxes:
         born = visual.parse_date(b.text, today)
@@ -99,14 +107,24 @@ def parse_front_number(boxes: list[Box]) -> str:
 
 
 def _front_number(engine: Any, card: np.ndarray) -> str:
-    """Lee solo la zona del numero. El rojo claro es oscuro en el canal verde."""
+    """Lee solo la zona del numero. Prueba color si el canal verde pierde el rojo claro."""
     h, w = card.shape[:2]
     (y0, y1), (x0, x1) = FRONT_REGION
-    green = card[int(y0 * h) : int(y1 * h), int(x0 * w) : int(x1 * w), 1]
+    region = card[int(y0 * h) : int(y1 * h), int(x0 * w) : int(x1 * w)]
+    green = region[:, :, 1]
     green = cv2.resize(green, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
     boxes, _, _ = visual.read_boxes(
         engine, cv2.cvtColor(green, cv2.COLOR_GRAY2BGR), use_cls=False
     )
+    number = parse_front_number(boxes)
+    if number:
+        return number
+    # El reverso no tiene "No.". Evitar una segunda inferencia en cada reverso ahorra tiempo
+    # dentro del plazo de la app, especialmente en el totem.
+    if not any(b.key in {"NO", "N0"} for b in boxes):
+        return ""
+    color = cv2.resize(region, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    boxes, _, _ = visual.read_boxes(engine, color, use_cls=False)
     return parse_front_number(boxes)
 
 

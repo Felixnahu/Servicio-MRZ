@@ -396,9 +396,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         passport_like = passport_shaped and not card_seen
         if settings.save_failed_photos:
             await asyncio.to_thread(_save_failed, Path(settings.data_dir) / "fallidas", raws)
-        # Cedula antigua (sin MRZ): lectura local por plantilla (nombre y fecha del reverso, numero
-        # del anverso). Solo si ninguna foto mostro una MRZ ni tiene forma de pasaporte.
-        if settings.old_ci_ocr and not (mrz_seen or passport_like):
+        # Cedula antigua: la proporcion puede caer en el rango de pasaporte y una falsa observacion
+        # MRZ puede aparecer en el reverso. Una MRZ valida ya retorno arriba; el lector antiguo
+        # valida su formato por el texto del reverso.
+        if settings.old_ci_ocr:
             t0 = time.monotonic()
             # Al menos 10 s de trabajo aunque la MRZ haya gastado mucho, pero nunca mas alla de
             # `old_ci_deadline_s` desde el inicio: la app abandona a los 45 s.
