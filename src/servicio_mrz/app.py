@@ -331,7 +331,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raws = [encode_jpeg(latest[1], quality=90)]
         started = time.monotonic()
         card_seen = False
-        looks_passport = False  # la lectura local vio una MRZ de 2 lineas (pasaporte)
+        mrz_seen = False  # alguna foto mostro una MRZ (aunque no se leyo): no es carnet antiguo
         mrz_ms: list[int] = []
         # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
         # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
@@ -362,11 +362,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return contract.from_mrz(reading.result, elapsed_ms=ms)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
-            looks_passport = (
-                looks_passport
-                or (reading.result is not None and reading.result.format == "TD3")
-                or (reading.observation is not None and reading.observation.lines == 2)
-            )
+            mrz_seen = mrz_seen or reading.observation is not None
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
         if settings.save_failed_photos:
@@ -396,12 +392,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return printed
         # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
-        # El KYC NO lee pasaportes (comprobado en el totem): enviarlos suma ~40 s de espera y expone
-        # la foto sin ganar nada. Se excluyen por el tipo que informa la app y por lo que vio la
-        # lectura local (MRZ de 2 lineas). Cualquier otro documento sin MRZ legible, p. ej. la
-        # cedula antigua, si va al KYC.
+        # El KYC es SOLO para documentos que no tienen MRZ (la cedula antigua). No lee pasaportes
+        # (comprobado en el totem) y un documento con MRZ que aqui no se pudo leer (pasaporte o
+        # cedula 2023) necesita otra foto, no el KYC. "Tiene MRZ" = la lectura local vio texto
+        # con estructura de MRZ (medido: ninguna foto sin MRZ lo mostro, todos los pasaportes si).
         excluded = (documentType or "").strip().upper() in settings.kyc_excluded
-        if settings.kyc_fallback and settings.kyc_base_url and not (excluded or looks_passport):
+        if settings.kyc_fallback and settings.kyc_base_url and not (excluded or mrz_seen):
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
             remaining = settings.request_deadline_s - (time.monotonic() - started)

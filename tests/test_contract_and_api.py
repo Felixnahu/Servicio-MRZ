@@ -452,18 +452,22 @@ def test_a_document_without_type_or_with_another_type_still_reaches_the_kyc(monk
         assert res.status_code == 200 and len(calls) == 1, data
 
 
-def test_a_two_line_mrz_seen_locally_blocks_the_kyc_even_without_the_type(monkeypatch):
-    """Pasaporte que la app no marco como tal: la lectura local ve una MRZ de 2 lineas."""
+def test_a_document_with_an_unreadable_mrz_is_not_sent_to_the_kyc(monkeypatch):
+    """El KYC es solo para lo que NO tiene MRZ (cedula antigua). Un pasaporte o una cedula 2023
+    cuya MRZ se vio pero no se pudo leer necesita otra foto, aunque la app no lo marque asi."""
+    import numpy as np
+
+    from servicio_mrz.mrzread import Observation
     from servicio_mrz.ocr import MrzReader, Reading
 
     client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-    fake = type("R", (), {"format": "TD3", "core_checks_ok": False})()  # lectura incompleta
-    monkeypatch.setattr(
-        MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(fake, rows=(1, 2))
-    )
+    seen_mrz = Reading(None, rows=(1, 2), observation=Observation(2, (np.zeros((44, 3)),), 0.9))
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: seen_mrz)
     with client as c:
-        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
-    assert res.status_code == 422 and calls == []
+        for doc_type in (None, "CI_BO", "FOREIGN_ID"):
+            data = {} if doc_type is None else {"documentType": doc_type}
+            res = c.post("/mrz/leer", data=data, files={"front": ("f.jpg", blank)})
+            assert res.status_code == 422 and calls == [], doc_type
 
 
 def test_ci_tries_only_the_back_locally_and_then_goes_to_the_kyc(monkeypatch):
