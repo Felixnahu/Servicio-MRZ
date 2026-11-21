@@ -377,8 +377,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return printed
         # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
-        # El KYC no reconoce pasaportes (comprobado en el totem): enviarlos solo suma ~40 s de espera
-        # y expone la foto sin ganar nada. Si aqui no se lee, se rechaza de inmediato.
+        # El KYC no reconoce pasaportes (comprobado en el totem): enviarlos solo suma ~40 s de
+        # espera y expone la foto sin ganar nada. Si aqui no se lee, se rechaza de inmediato.
         is_passport = (documentType or "").upper() == "PASSPORT"
         if settings.kyc_fallback and settings.kyc_base_url and not is_passport:
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
