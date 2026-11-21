@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from servicio_mrz import contract
 from servicio_mrz.app import create_app
 from servicio_mrz.config import Settings
-from servicio_mrz.kyc_client import to_contract
 from servicio_mrz.mrz import parse_mrz
 
 TODAY = date(2026, 11, 20)
@@ -55,46 +54,14 @@ def test_age_boundaries_use_birthday():
     assert contract.age_at(date(2008, 11, 20), TODAY) == 18
 
 
-def test_external_response_is_translated_to_same_contract():
-    out = to_contract(
-        {
-            "document_type": "CI_NACIONAL",
-            "document_model": "ci_2023",
-            "document_number": "1234567",
-            "first_name": "ANA MARIA",
-            "last_name": "PEREZ LOPEZ",
-            "nationality": "BOL",
-            "birth_date": "2001-06-10",
-            "age": 25,
-            "is_adult": True,
-            "is_samaipateno": False,
-            "suggested_category": "nacional_adulto",
-            "requires_manual_entry": False,
-            "status": "verified",
-            "optical_diagnostics": {"reasons": []},
-        },
-        elapsed_ms=3000,
-    )
-    assert out["documentType"] == "CI_BO"
-    assert out["fields"]["firstNames"] == "ANA MARIA"
-    assert out["suggestedCategory"] == "nacional_adulto" and out["kycMs"] == 3000
-    assert out["source"] == "external"
-
-
-def test_unknown_category_becomes_null():
-    out = to_contract({"suggested_category": "otra"}, elapsed_ms=1)
-    assert out["suggestedCategory"] is None and out["documentType"] is None
-
-
 def _client() -> TestClient:
-    return TestClient(create_app(Settings(camera_enabled=False, kyc_base_url="", _env_file=None)))
+    return TestClient(create_app(Settings(camera_enabled=False, _env_file=None)))
 
 
 def test_health_without_camera():
     with _client() as c:
         body = c.get("/health").json()
     assert body["status"] == "ok" and body["camera"]["running"] is False
-    assert body["kycConfigured"] is False
 
 
 def test_frame_without_camera_is_503():
@@ -127,13 +94,6 @@ def test_mrz_endpoint_rejects_non_image():
     with _client() as c:
         res = c.post("/mrz/leer", files={"file": ("x.jpg", b"no-es-imagen", "image/jpeg")})
     assert res.status_code == 400
-
-
-def test_kyc_endpoint_without_config_is_503_with_code():
-    with _client() as c:
-        res = c.post("/kyc/leer", files={"front": ("f.jpg", b"x", "image/jpeg")})
-    assert res.status_code == 503
-    assert res.json()["codigo"] == "KYC_NO_CONFIGURADO"
 
 
 def test_camera_list_and_choose_validation(monkeypatch):
@@ -285,130 +245,6 @@ def test_recognition_mode_can_be_switched_to_photo_only():
         assert c.get("/reconocimiento").json() == {"auto": False}
 
 
-def _totem_client(monkeypatch, kyc_result):
-    """Como el totem: sin OCR local, con KYC configurado (simulado: no sale ninguna foto)."""
-    import numpy as np
-
-    from servicio_mrz import kyc_client
-    from servicio_mrz.ocr import MrzReader, Reading
-
-    calls = []
-
-    async def fake_read(settings, front, back=None):
-        calls.append((len(front), None if back is None else len(back)))
-        if isinstance(kyc_result, Exception):
-            raise kyc_result
-        return dict(kyc_result)
-
-    monkeypatch.setattr(kyc_client, "read_document", fake_read)
-    # hay lineas de texto en la foto: un documento sin MRZ legible, no una mesa vacia
-    with_text = Reading(None, rows=(object(), object()))
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: with_text)
-    settings = Settings(
-        camera_enabled=False,
-        visual_ocr=False,
-        kyc_base_url="https://kyc.invalid",
-        _env_file=None,
-    )
-    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
-    return TestClient(create_app(settings)), blank, calls
-
-
-def test_without_mrz_the_photos_go_to_the_kyc_and_its_contract_is_returned(monkeypatch):
-    kyc = {"documentType": "CI_BO", "fields": {"birthDate": "1990-03-15"}, "source": "external"}
-    client, blank, calls = _totem_client(monkeypatch, kyc)
-    with client as c:
-        res = c.post(
-            "/mrz/leer",
-            data={"documentType": "CI_BO"},
-            files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)},
-        )
-    assert res.status_code == 200
-    body = res.json()
-    assert body["source"] == "external" and body["fields"]["birthDate"] == "1990-03-15"
-    assert "duracionMs" in body and calls == [(len(blank), len(blank))]
-
-
-def test_kyc_errors_keep_the_codes_the_app_understands(monkeypatch):
-    from servicio_mrz import kyc_client
-
-    cases = [
-        ("DOCUMENTO_NO_LEGIBLE", 422),
-        ("KYC_TIEMPO_AGOTADO", 503),
-        ("KYC_SIN_CONEXION", 503),
-    ]
-    for code, status in cases:
-        client, blank, _ = _totem_client(monkeypatch, kyc_client.KycError(code, "x"))
-        with client as c:
-            res = c.post(
-                "/mrz/leer", data={"documentType": "CI_BO"}, files={"front": ("f.jpg", blank)}
-            )
-        body = res.json()
-        assert (res.status_code, body["codigo"], body["origen"]) == (status, code, "KYC")
-
-
-def test_valid_mrz_never_reaches_the_kyc(monkeypatch):
-    import pytest
-
-    if not FONT.exists():
-        pytest.skip("requiere la fuente Consolas de Windows")
-    client, _, calls = _totem_client(monkeypatch, {})
-    monkeypatch.undo()  # lectura MRZ real; el KYC sigue sin configurarse
-    with _client() as c:
-        res = c.post("/mrz/leer", files={"front": ("f.jpg", _td3_jpeg(), "image/jpeg")})
-    assert res.status_code == 200 and res.json()["source"] == "mrz" and calls == []
-
-
-def test_a_slow_kyc_is_cut_at_the_total_deadline(monkeypatch):
-    """Aunque el KYC no conteste, el servicio responde antes de que la app abandone."""
-    import asyncio
-    import time
-
-    import numpy as np
-
-    from servicio_mrz import kyc_client
-    from servicio_mrz.ocr import MrzReader, Reading
-
-    async def never(settings, front, back=None):
-        await asyncio.sleep(30)
-
-    monkeypatch.setattr(kyc_client, "read_document", never)
-    with_text = Reading(None, rows=(object(), object()))
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: with_text)
-    settings = Settings(
-        camera_enabled=False,
-        visual_ocr=False,
-        kyc_base_url="https://kyc.invalid",
-        request_deadline_s=7.0,  # con menos de KYC_MIN_S (5 s) de margen ni se consulta
-        _env_file=None,
-    )
-    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
-    started = time.monotonic()
-    with TestClient(create_app(settings)) as c:
-        res = c.post(
-            "/mrz/leer", data={"documentType": "CI_BO"}, files={"front": ("f.jpg", blank)}
-        )
-    assert res.status_code == 503 and res.json()["codigo"] == "KYC_TIEMPO_AGOTADO"
-    assert time.monotonic() - started < 10
-
-
-def test_passport_shaped_documents_are_never_sent_to_the_kyc(monkeypatch):
-    """La app no dice que documento es: un pasaporte se reconoce por la proporcion de su tarjeta
-    (~1.42, las cedulas miden >= 1.47) y no va al KYC aunque la lectura de la MRZ falle."""
-    from servicio_mrz.ocr import MrzReader, Reading
-
-    client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-    corners = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
-    passport = Reading(None, rows=(1, 2), card=corners, card_aspect=1.40)
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: passport)
-    with client as c:
-        res = c.post(
-            "/mrz/leer", files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
-        )
-    assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
-    assert calls == []
-
-
 def test_failed_photos_are_saved_only_when_asked(monkeypatch, tmp_path):
     import numpy as np
 
@@ -467,32 +303,6 @@ def test_both_photos_are_always_read_when_the_first_gives_no_result(monkeypatch)
             c.post("/mrz/leer", data={"documentType": doc_type}, files=files)
         assert len(seen) == expected, (doc_type, reading is with_mrz)
 
-def test_a_document_without_type_or_with_another_type_still_reaches_the_kyc(monkeypatch):
-    """La cedula antigua no debe quedar fuera por el tipo: solo se excluyen los pasaportes."""
-    for data in ({}, {"documentType": "CI_BO"}, {"documentType": "FOREIGN_ID"}):
-        client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-        with client as c:
-            res = c.post("/mrz/leer", data=data, files={"front": ("f.jpg", blank)})
-        assert res.status_code == 200 and len(calls) == 1, data
-
-
-def test_a_document_with_an_unreadable_mrz_is_not_sent_to_the_kyc(monkeypatch):
-    """El KYC es solo para lo que NO tiene MRZ (cedula antigua). Un pasaporte o una cedula 2023
-    cuya MRZ se vio pero no se pudo leer necesita otra foto, aunque la app no lo marque asi."""
-    import numpy as np
-
-    from servicio_mrz.mrzread import Observation
-    from servicio_mrz.ocr import MrzReader, Reading
-
-    client, blank, calls = _totem_client(monkeypatch, {"source": "external"})
-    seen_mrz = Reading(None, rows=(1, 2), observation=Observation(2, (np.zeros((44, 3)),), 0.9))
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: seen_mrz)
-    with client as c:
-        for doc_type in (None, "CI_BO", "FOREIGN_ID"):
-            data = {} if doc_type is None else {"documentType": doc_type}
-            res = c.post("/mrz/leer", data=data, files={"front": ("f.jpg", blank)})
-            assert res.status_code == 422 and calls == [], doc_type
-
 
 def test_the_mrz_is_found_whichever_photo_and_whatever_type_the_app_sends():
     """Regresion del totem: el tipo sale de la categoria y el pasaporte va como 1a foto. Con la
@@ -515,3 +325,22 @@ def test_the_mrz_is_found_whichever_photo_and_whatever_type_the_app_sends():
                 res = c.post("/mrz/leer", data=data, files=files)
             assert res.status_code == 200, (doc_type, list(files))
             assert res.json()["fields"]["documentNumber"] == "L898902C"
+
+
+def test_there_is_no_external_service_any_more(monkeypatch):
+    """Sin lectura local el resultado es 422 con origen LOCAL y no se sale a ninguna red."""
+    import numpy as np
+
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
+    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, deadline=None: None)
+    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
+    settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
+    with TestClient(create_app(settings)) as c:
+        res = c.post("/mrz/leer", files={"front": ("f.jpg", blank), "back": ("b.jpg", blank)})
+        assert c.post("/kyc/leer", files={"front": ("f.jpg", blank)}).status_code == 404
+        assert "kycConfigured" not in c.get("/health").json()
+    body = res.json()
+    assert res.status_code == 422 and body["codigo"] == "DOCUMENTO_NO_LEGIBLE"
+    assert body["origen"] == "LOCAL" and "duracionMs" in body

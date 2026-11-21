@@ -118,7 +118,7 @@ def test_front_number_retries_color_only_when_number_label_is_seen(monkeypatch):
     assert oldci._front_number(object(), card) == ""
 
 
-def test_endpoint_uses_the_local_old_ci_reader_before_the_kyc(monkeypatch):
+def test_endpoint_uses_the_local_old_ci_reader(monkeypatch):
     import cv2
 
     calls = []
@@ -199,31 +199,3 @@ def test_old_ci_reader_reads_required_back_before_optional_front(monkeypatch):
     assert result is not None and result["fields"]["birthDate"] == "1985-03-15"
     assert result["fields"]["documentNumber"] == "1234567"
     assert calls == ["back", "front"]
-
-
-def test_kyc_is_skipped_when_no_time_is_left(monkeypatch):
-    """Sin margen antes del corte de la app, esperar al KYC solo alarga el error."""
-    import cv2
-
-    from servicio_mrz import kyc_client
-
-    calls = []
-
-    async def fake(settings, front, back=None):
-        calls.append(1)
-        return {"source": "external"}
-
-    monkeypatch.setattr(kyc_client, "read_document", fake)
-    monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
-    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, deadline=None: None)
-    ok, buf = cv2.imencode(".jpg", np.full((400, 600, 3), 200, np.uint8))
-    settings = Settings(
-        camera_enabled=False,
-        visual_ocr=False,
-        kyc_base_url="https://kyc.invalid",
-        request_deadline_s=0.5,
-        _env_file=None,
-    )
-    with TestClient(create_app(settings)) as c:
-        res = c.post("/mrz/leer", files={"front": ("f.jpg", buf.tobytes())})
-    assert res.status_code == 422 and calls == []

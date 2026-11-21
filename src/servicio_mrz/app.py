@@ -5,7 +5,6 @@ Endpoints por ahora:
 - GET  /camara/stream     video en vivo (MJPEG) para que la app lo muestre
 - GET  /camara/frame      un cuadro JPEG
 - POST /mrz/leer          imagen -> JSON del contrato (lectura MRZ local)   [pruebas con fotos]
-- POST /kyc/leer          front (+back) -> JSON del contrato via servicio externo
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from servicio_mrz import camera_profile, contract, kyc_client
+from servicio_mrz import camera_profile, contract
 from servicio_mrz.calibration import Calibrator
 from servicio_mrz.camera import Camera, device_names, encode_jpeg
 from servicio_mrz.config import Settings
@@ -50,7 +49,6 @@ log = logging.getLogger("servicio_mrz")
 
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
 OLD_CI_MIN_S = 10.0  # trabajo minimo que se da al OCR del carnet antiguo
-KYC_MIN_S = 5.0  # margen minimo que debe quedar para consultar el KYC
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
 STREAM_WIDTH = 960
@@ -273,7 +271,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "status": "ok",
             "camera": {"running": camera.running, "resolution": camera.resolution()},
-            "kycConfigured": bool(settings.kyc_base_url and settings.kyc_api_key),
         }
 
     @app.get("/camara/frame")
@@ -322,7 +319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sin MRZ: dar la vuelta a la tarjeta) o `no_legible` (mejorar luz/enfoque/posicion).
         Las fotos no se guardan ni se registran sus datos.
         """
-        raws: list[bytes] = []  # bytes originales: solo se usan si hay que consultar el KYC
+        raws: list[bytes] = []  # bytes originales: solo para guardar las fotos fallidas (pruebas)
         first = front if front is not None else file
         if first is not None:
             raws.append(await _upload(first))
@@ -337,9 +334,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raws = [encode_jpeg(latest[1], quality=90)]
         started = time.monotonic()
         card_seen = False
-        mrz_seen = False  # alguna foto mostro una MRZ (aunque no se leyo): no es carnet antiguo
         mrz_ms: list[str] = []  # una entrada por foto leida (solo tiempos y forma, nunca datos)
-        passport_shaped = False  # alguna tarjeta localizada mide menos de 1.47 de proporcion
         # La app SIEMPRE manda dos fotos ("frente" y "reverso") y NO dice que documento es: el tipo
         # se deduce de lo que se ve. Donde esta la MRZ depende del documento (cedula 2023: reverso;
         # pasaporte: pagina de datos, en cualquiera de las dos). El orden es solo una preferencia
@@ -385,15 +380,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return contract.from_mrz(reading.result, elapsed_ms=ms, samaipateno=samaipateno)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
-            mrz_seen = mrz_seen or reading.observation is not None
             looks_id1 = reading.card is not None and reading.card_aspect >= ID1_MIN_ASPECT
             card_seen = card_seen or looks_id1
-            passport_shaped = passport_shaped or (
-                reading.card is not None and 0 < reading.card_aspect < ID1_MIN_ASPECT
-            )
-        # La proporcion discrimina mal (cedulas 1.46-1.61, pasaportes 1.26-1.47): una sola foto
-        # "baja" no basta. Es pasaporte solo si NINGUNA foto mostro proporcion de cedula.
-        passport_like = passport_shaped and not card_seen
         if settings.save_failed_photos:
             await asyncio.to_thread(_save_failed, Path(settings.data_dir) / "fallidas", raws)
         # Cedula antigua: la proporcion puede caer en el rango de pasaporte y una falsa observacion
@@ -440,67 +428,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ms,
                 )
                 return printed
-        # Respaldo externo: cedulas antiguas (sin MRZ) y lecturas que el servicio local no logra.
-        # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
-        # El KYC es SOLO para documentos que no tienen MRZ (la cedula antigua). No lee pasaportes
-        # (comprobado en el totem) y un documento con MRZ que aqui no se pudo leer (pasaporte o
-        # cedula 2023) necesita otra foto, no el KYC. "Tiene MRZ" = la lectura local vio texto
-        # con estructura de MRZ (medido: ninguna foto sin MRZ lo mostro, todos los pasaportes si).
-        time_left = settings.request_deadline_s - (time.monotonic() - started)
-        if (
-            settings.kyc_fallback
-            and settings.kyc_base_url
-            and not (passport_like or mrz_seen)
-            and time_left >= KYC_MIN_S  # sin margen la llamada no puede acabar antes del corte
-        ):
-            # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
-            # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
-            remaining = settings.request_deadline_s - (time.monotonic() - started)
-            kyc_settings = settings.model_copy(
-                update={"kyc_timeout_s": min(settings.kyc_timeout_s, max(remaining, 5.0))}
-            )
-            try:
-                # httpx aplica su timeout por operacion, no al total: wait_for pone el tope real.
-                data = await asyncio.wait_for(
-                    kyc_client.read_document(
-                        kyc_settings, raws[0], raws[1] if len(raws) > 1 else None
-                    ),
-                    timeout=max(remaining, 5.0),
-                )
-            except (kyc_client.KycError, TimeoutError) as e:
-                ms = int((time.monotonic() - started) * 1000)
-                if isinstance(e, kyc_client.KycError):
-                    code, message, kyc_elapsed = e.code, str(e), e.elapsed_ms
-                else:
-                    code, message, kyc_elapsed = (
-                        "KYC_TIEMPO_AGOTADO", "El KYC no respondio a tiempo", None,
-                    )
-                log.info(
-                    "leer: fotos=%d mrz_ms=%s total_ms=%d resultado=kyc_error codigo=%s",
-                    len(images), mrz_ms, ms, code,
-                )
-                return JSONResponse(
-                    {
-                        "codigo": code,
-                        "mensaje": message,
-                        "reasons": ["mrz_not_found"],
-                        "origen": "KYC",
-                        "kycMs": kyc_elapsed or ms,
-                        "duracionMs": kyc_elapsed or ms,
-                    },
-                    status_code=422 if code == "DOCUMENTO_NO_LEGIBLE" else 503,
-                )
-            ms = int((time.monotonic() - started) * 1000)
-            kyc_ms = data.get("kycMs")
-            data["duracionMs"] = data["kycMs"] = ms
-            # Solo estado y codigos de razon (nunca valores del documento).
-            log.info(
-                "leer: fotos=%d mrz_ms=%s kyc_ms=%s total_ms=%d resultado=kyc estado=%s "
-                "manual=%s razones=%s",
-                len(images), mrz_ms, kyc_ms, ms, data.get("status"),
-                data.get("requiresManualEntry"), data.get("reasons"),
-            )
-            return data
         ms = int((time.monotonic() - started) * 1000)
         log.info(
             "leer: fotos=%d %s mrz_ms=%s visual_ms=%s total_ms=%d resultado=no_legible",
@@ -566,21 +493,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "intento": attempt,
             **info,
         }
-
-    @app.post("/kyc/leer")
-    async def read_kyc(
-        front: Annotated[UploadFile, File()],
-        back: Annotated[UploadFile | None, File()] = None,
-    ):
-        back_bytes = await _upload(back) if back else None
-        try:
-            return await kyc_client.read_document(settings, await _upload(front), back_bytes)
-        except kyc_client.KycError as e:
-            status = 422 if e.code == "DOCUMENTO_NO_LEGIBLE" else 503
-            return JSONResponse(
-                {"codigo": e.code, "mensaje": str(e), "origen": "KYC", "duracionMs": e.elapsed_ms},
-                status_code=status,
-            )
 
     app.state.camera = camera
     app.state.reader = reader

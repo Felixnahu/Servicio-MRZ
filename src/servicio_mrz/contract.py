@@ -41,7 +41,7 @@ def document_model(result: MrzResult) -> str:
 def suggested_category(
     nationality: str, age: int | None, samaipateno: bool | None = None
 ) -> str | None:
-    """Categoria de entrada que sugiere el documento (mismos valores que el KYC).
+    """Categoria de entrada que sugiere el documento (`samaipateno`, `nacional_*`, `extranjero_*`).
 
     'samaipateno' solo si el lugar de nacimiento leido es Samaipata; sin esa lectura no se adivina.
     """
