@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from servicio_mrz import cardfinder, celldecode, mrzread, oldci, visual
+from servicio_mrz import birthplace, cardfinder, celldecode, mrzread, oldci, visual
 from servicio_mrz.mrz import MrzResult, parse_mrz
 from servicio_mrz.mrzread import Observation
 from servicio_mrz.textclean import clean_row
@@ -272,6 +272,20 @@ class MrzReader:
         """Cedula boliviana antigua (sin MRZ) por plantilla: nombre y fecha del reverso, numero del
         anverso. None si no se lee la fecha de nacimiento."""
         return oldci.read_old_ci(self._engine_ready(), images)
+
+    def read_birthplace(self, img: np.ndarray) -> bool | None:
+        """Cedula 2023 (reverso): True/False/None segun si el lugar de nacimiento es Samaipata.
+
+        Solo lee la franja superior de la tarjeta, donde va "LUGAR DE NACIMIENTO" (~0.3 s).
+        """
+        engine = self._engine_ready()
+        card = visual._prepare(img)
+        for rot in (card, cv2.rotate(card, cv2.ROTATE_180)):
+            band = rot[: int(0.3 * rot.shape[0])]
+            boxes, width, _ = visual.read_boxes(engine, band, use_cls=False)
+            if any(birthplace._is_label(b.text) for b in boxes):
+                return birthplace.from_new_boxes(boxes, width)
+        return None
 
     def read_visual(self, img: np.ndarray) -> dict | None:
         """Campos IMPRESOS (OCR por etiqueta): respaldo cuando no hay MRZ legible (~1.7 s)."""

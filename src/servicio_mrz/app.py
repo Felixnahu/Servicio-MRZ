@@ -363,7 +363,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     mrz_ms,
                     ms,
                 )
-                return contract.from_mrz(reading.result, elapsed_ms=ms)
+                samaipateno = None
+                if (
+                    settings.birthplace_ocr
+                    and contract.document_type(reading.result) == "CI_BO"
+                    and time.monotonic() - started < settings.request_budget_s
+                ):
+                    try:
+                        samaipateno = await asyncio.to_thread(reader.read_birthplace, img)
+                    except Exception:  # noqa: BLE001 - un extra: nunca debe tumbar la lectura
+                        log.warning("leer: no se pudo leer el lugar de nacimiento")
+                    ms = int((time.monotonic() - started) * 1000)
+                return contract.from_mrz(reading.result, elapsed_ms=ms, samaipateno=samaipateno)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
             mrz_seen = mrz_seen or reading.observation is not None

@@ -28,7 +28,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from servicio_mrz import visual
+from servicio_mrz import birthplace, visual
 from servicio_mrz.visual import Box
 
 # Zona del anverso con "No. 1234567": ((y0, y1), (x0, x1)) como fraccion de la tarjeta enderezada.
@@ -42,9 +42,12 @@ class OldCiRead:
     born: date | None = None
     full_name: str = ""
     number: str = ""
+    samaipateno: bool | None = None
 
     def merge(self, other: OldCiRead) -> None:
         self.born = self.born or other.born
+        if self.samaipateno is None:
+            self.samaipateno = other.samaipateno
         self.full_name = self.full_name or other.full_name
         self.number = self.number or other.number
 
@@ -78,7 +81,9 @@ def parse_back(boxes: list[Box], width: float, today: date | None = None) -> Old
         if len(text.split()) >= 2 and len(text) >= 6:
             candidates.append((b, text))
     name = max(candidates, key=lambda item: item[0].cy)[1] if candidates else ""
-    return OldCiRead(born=born, full_name=name)
+    return OldCiRead(
+        born=born, full_name=name, samaipateno=birthplace.from_old_boxes(boxes, line)
+    )
 
 
 def parse_front_number(boxes: list[Box]) -> str:
@@ -146,4 +151,5 @@ def read_old_ci(engine: Any, images: list[np.ndarray]) -> dict[str, Any] | None:
         total.born,
         "ci-old",
         extra_reasons=("DIVISION_DE_NOMBRES_ESTIMADA",) if len(words) > 1 else (),
+        samaipateno=total.samaipateno,
     )

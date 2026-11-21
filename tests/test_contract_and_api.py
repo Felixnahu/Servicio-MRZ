@@ -32,8 +32,17 @@ def test_passport_maps_to_app_contract():
         "birthDate": "1969-08-06",
     }
     assert (out["age"], out["isAdult"]) == (57, True)
-    assert out["isSamaipateno"] is None and out["suggestedCategory"] is None
-    assert out["categoryMatches"] is None and out["kycMs"] == 120
+    assert out["documentModel"] == "passport"
+    assert out["suggestedCategory"] == "extranjero_adulto"
+    assert out["isSamaipateno"] is None and out["categoryMatches"] is None
+    assert out["kycMs"] == 120
+
+
+def test_suggested_category_by_nationality_and_age():
+    assert contract.suggested_category("BOL", 17) == "nacional_menor"
+    assert contract.suggested_category("BOL", 18) == "nacional_adulto"
+    assert contract.suggested_category("ARG", 10) == "extranjero_menor"
+    assert contract.suggested_category("BOL", None) is None
 
 
 def test_foreign_id_card_type():

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Cedula antigua (sin MRZ): lectura local por plantilla antes de recurrir al KYC (~0.8 s por
     # foto en un PC rapido). Solo actua si ninguna foto mostro una MRZ.
     old_ci_ocr: bool = True
+    # Cedula 2023: tras leer la MRZ, lee el "lugar de nacimiento" del reverso (franja superior,
+    # ~0.3 s) para `isSamaipateno`. Si falla o no hay tiempo, queda en null.
+    birthplace_ocr: bool = True
 
     # Solo loopback: el stream muestra documentos de identidad.
     host: str = "127.0.0.1"

@@ -20,7 +20,12 @@ from typing import Any
 import cv2
 import numpy as np
 
-from servicio_mrz.contract import ADULT_AGE, age_at, today_in_bolivia
+from servicio_mrz.contract import (
+    ADULT_AGE,
+    age_at,
+    suggested_category,
+    today_in_bolivia,
+)
 from servicio_mrz.mrz.countries import VALID_CODES
 
 _MONTHS = {
@@ -170,6 +175,7 @@ def _result(
     born: date,
     layout: str,
     extra_reasons: tuple[str, ...] = (),
+    samaipateno: bool | None = None,
 ) -> dict[str, Any]:
     today = today_in_bolivia()
     age = age_at(born, today)
@@ -185,8 +191,8 @@ def _result(
         },
         "age": age,
         "isAdult": age >= ADULT_AGE,
-        "isSamaipateno": None,
-        "suggestedCategory": None,
+        "isSamaipateno": samaipateno,
+        "suggestedCategory": suggested_category(nationality, age, samaipateno),
         "categoryMatches": None,
         "source": "ocr",
         "requiresManualEntry": False,

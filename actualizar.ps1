@@ -1,6 +1,11 @@
 # Baja la ultima version del repositorio, actualiza las dependencias y reinicia el servicio MRZ.
 # Ejecutar en el totem, desde la carpeta del proyecto:
 #     powershell -ExecutionPolicy Bypass -File .\actualizar.ps1
+#
+# Para probar otra rama en el totem (y volver a la estable cuando acabe):
+#     powershell -ExecutionPolicy Bypass -File .\actualizar.ps1 -Rama Dev/MRZ-OCR-PASS-CI
+#     powershell -ExecutionPolicy Bypass -File .\actualizar.ps1 -Rama main
+param([string]$Rama = "")
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 $env:PATH = "$env:USERPROFILE\.local\bin;$env:PATH"
@@ -8,6 +13,15 @@ $env:PATH = "$env:USERPROFILE\.local\bin;$env:PATH"
 if (-not (Test-Path ".git")) {
     throw "Esta carpeta no es un clon de git. Ver las instrucciones de primera instalacion."
 }
+
+if ($Rama) {
+    Write-Host "0/3 Cambiando a la rama $Rama..."
+    git fetch origin $Rama
+    if ($LASTEXITCODE -ne 0) { throw "No existe la rama $Rama en origin o no hay internet. No se toco el servicio." }
+    git checkout $Rama
+    if ($LASTEXITCODE -ne 0) { throw "No se pudo cambiar a $Rama (cambios locales sin guardar?). No se toco el servicio." }
+}
+Write-Host "Rama actual: $(git rev-parse --abbrev-ref HEAD)"
 
 Write-Host "1/3 Bajando cambios..."
 git pull --ff-only
