@@ -344,3 +344,41 @@ def test_there_is_no_external_service_any_more(monkeypatch):
     body = res.json()
     assert res.status_code == 422 and body["codigo"] == "DOCUMENTO_NO_LEGIBLE"
     assert body["origen"] == "LOCAL" and "duracionMs" in body
+
+
+def test_birthplace_is_read_after_a_valid_mrz_even_when_the_mrz_was_slow(monkeypatch):
+    """Cedula 2023: con la MRZ ya validada se lee el lugar de nacimiento aunque hayan pasado mas
+    de 15 s (en el totem la MRZ sola tarda 7-18 s); solo se omite si no queda margen."""
+    import time
+
+    import numpy as np
+
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    result = parse_mrz(PASSPORT, today=TODAY)
+    assert result is not None and result.core_checks_ok
+    monkeypatch.setattr(contract, "document_type", lambda r: "CI_BO")  # solo importa el tipo
+    calls = []
+
+    def slow_read(self, img, *a, **k):
+        time.sleep(0.2)
+        return Reading(result)
+
+    def fake_place(self, img):
+        calls.append(1)
+        return True
+
+    monkeypatch.setattr(MrzReader, "read_detailed", slow_read)
+    monkeypatch.setattr(MrzReader, "read_birthplace", fake_place)
+    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
+    # request_budget_s=0: la regla vieja (< 15 s) lo habria omitido siempre
+    for deadline, expected in ((40.0, 1), (0.5, 0)):  # con 0.5 s no queda margen: se omite
+        calls.clear()
+        settings = Settings(
+            camera_enabled=False, request_budget_s=0.0, request_deadline_s=deadline, _env_file=None
+        )
+        with TestClient(create_app(settings)) as c:
+            res = c.post("/mrz/leer", files={"front": ("f.jpg", blank)})
+        assert res.status_code == 200 and len(calls) == expected, deadline
+        assert res.json()["isSamaipateno"] is (True if expected else None)
+

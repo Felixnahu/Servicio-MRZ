@@ -49,6 +49,7 @@ log = logging.getLogger("servicio_mrz")
 
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
 OLD_CI_MIN_S = 10.0  # trabajo minimo que se da al OCR del carnet antiguo
+BIRTHPLACE_MIN_LEFT_S = 8.0  # margen minimo (hasta el corte de la app) para leer el lugar
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
 STREAM_WIDTH = 960
@@ -367,16 +368,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ms,
                 )
                 samaipateno = None
-                if (
-                    settings.birthplace_ocr
-                    and contract.document_type(reading.result) == "CI_BO"
-                    and time.monotonic() - started < settings.request_budget_s
-                ):
-                    try:
-                        samaipateno = await asyncio.to_thread(reader.read_birthplace, img)
-                    except Exception:  # noqa: BLE001 - un extra: nunca debe tumbar la lectura
-                        log.warning("leer: no se pudo leer el lugar de nacimiento")
+                if contract.document_type(reading.result) == "CI_BO" and settings.birthplace_ocr:
+                    # La MRZ ya valida: falta el lugar de nacimiento (el reverso del 2023 lo trae
+                    # junto a la MRZ). Se omite solo si no queda margen antes del corte de la app;
+                    # el tope NO es request_budget_s (15 s): en el totem la MRZ sola ya lo pasa.
+                    left = settings.request_deadline_s - (time.monotonic() - started)
+                    outcome = "omitido_sin_tiempo"
+                    if left >= BIRTHPLACE_MIN_LEFT_S:
+                        t0 = time.monotonic()
+                        try:
+                            samaipateno = await asyncio.to_thread(reader.read_birthplace, img)
+                            outcome = "no_leido" if samaipateno is None else "leido"
+                        except Exception:  # noqa: BLE001 - un extra: nunca debe tumbar la lectura
+                            outcome = "error"
+                        outcome += f" {int((time.monotonic() - t0) * 1000)}ms"
                     ms = int((time.monotonic() - started) * 1000)
+                    # Solo si se leyo o no (nunca el lugar ni el valor de isSamaipateno).
+                    log.info("leer: lugar_de_nacimiento=%s total_ms=%d", outcome, ms)
                 return contract.from_mrz(reading.result, elapsed_ms=ms, samaipateno=samaipateno)
             # tarjeta tipo cedula (ID-1) localizada sin MRZ valida: probablemente es el anverso.
             # Un pasaporte (~1.42) no tiene otra cara que mostrar: ahi el problema es la lectura.
