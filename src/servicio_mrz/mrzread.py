@@ -149,13 +149,14 @@ def _read_variant(
         # tiene mas texto encima de la MRZ y su mediana puede caer fuera del rango de busqueda)
         x_right = float(np.median([s.x1 for s in lines])) + 6
         x_left = float(np.median([s.x0 for s in lines])) - 2
-        decoded, _ = celldecode.decode_lines(
+        decoded, _, alt = celldecode.decode_lines(
             recognizer,
             card,
             [(s.y0, s.y1) for s in lines],
             celldecode.LAYOUTS[count],
             x_right,
             x_left,
+            with_elastic=True,
         )
         confidence = float(np.mean([d.confidence for d in decoded]))
         natural = index == 0 or (index == 1 and len(segs) >= 3)  # lineas reales, no inferidas
@@ -173,6 +174,16 @@ def _read_variant(
             [d.text for d in decoded], [np.stack(d.scores) for d in decoded], count
         )
         result = parse_mrz(texts)
+        if alt is not None and not (result and result.core_checks_ok):
+            # rejilla uniforme sin validar: probar la elastica (paginas curvas) y quedarse con ella
+            # solo si valida los controles
+            texts_alt = celldecode.snap_fields(
+                [d.text for d in alt], [np.stack(d.scores) for d in alt], count
+            )
+            result_alt = parse_mrz(texts_alt)
+            if result_alt and result_alt.core_checks_ok:
+                decoded, result = alt, result_alt
+                confidence = float(np.mean([d.confidence for d in decoded]))
         key = (*_score(result), confidence)
         if result and confidence >= MIN_CONFIDENCE and key > best_key:
             best, best_key = CardRead(result, tuple(segs), confidence, "celdas"), key

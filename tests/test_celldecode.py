@@ -47,3 +47,39 @@ def test_vectorized_matches_the_original_loop(lines, right, pitch):
         assert got.text == want_text
         assert got.confidence == pytest.approx(want_conf, abs=1e-5)
         assert np.allclose(np.stack(got.scores), want_scores, atol=1e-5)
+
+
+def _peaks(text: str, widths: list[float], start: float, steps: int = 256) -> _LineProbs:
+    """Probabilidades de un reconocedor ideal: un pico por caracter, en celdas de ancho variable."""
+    probs = np.full((steps, len(ALPHABET)), 0.01, np.float32)
+    px_per_step = 1100 / steps
+    x = start
+    for ch, w in zip(text, widths, strict=True):
+        probs[int((x + w / 2) / px_per_step), ALPHABET.index(ch)] = 1.0
+        x += w
+    alpha = np.vstack([probs, np.zeros((1, len(ALPHABET)), probs.dtype)])
+    return _LineProbs(probs, xa=0, px_per_step=px_per_step, alpha=alpha)
+
+
+TD3_LINE2 = "L898902C<3UTO6908061F9406236ZE184226B<<<<<10"
+
+
+def test_elastic_grid_recovers_a_line_whose_scale_changes_along_the_page():
+    """Pagina curva: la escala crece de forma gradual a lo largo de la linea. La rejilla uniforme
+    desalinea las celdas de los extremos; la elastica las sigue."""
+    layout = LAYOUTS[2][1]
+    widths = [float(w) for w in np.linspace(18.0, 24.0, 44)]
+    lp = _peaks(TD3_LINE2, widths, start=60.0)
+    right = 60.0 + sum(widths)
+    uniform = celldecode._decode_cells(lp, layout, right, pitch=sum(widths) / 44)
+    elastic = celldecode._decode_elastic(lp, layout, right, pitch=sum(widths) / 44)
+    wrong_elastic = sum(a != b for a, b in zip(elastic.text, TD3_LINE2, strict=True))
+    wrong_uniform = sum(a != b for a, b in zip(uniform.text, TD3_LINE2, strict=True))
+    # con picos ideales de un solo paso, la ultima celda puede quedar con el pico de su vecina
+    assert wrong_elastic <= 1 and wrong_elastic < wrong_uniform
+
+
+def test_elastic_grid_equals_the_uniform_one_when_the_scale_is_constant():
+    layout = LAYOUTS[2][1]
+    lp = _peaks(TD3_LINE2, [20.5] * 44, start=70.0)
+    assert celldecode._decode_elastic(lp, layout, 70.0 + 44 * 20.5, 20.5).text == TD3_LINE2

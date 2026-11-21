@@ -169,13 +169,18 @@ def decode_lines(
     layouts: list[str],
     x_right: float,
     x_left: float | None = None,
-) -> tuple[list[Decoded], float]:
+    with_elastic: bool = False,
+) -> tuple[list[Decoded], float, list[Decoded] | None]:
     """Decodifica las lineas (y0, y1) con la rejilla que mejor explica al reconocedor.
+
+    Devuelve (lineas, paso, alternativa). Con `with_elastic` la alternativa es la misma lectura
+    con una rejilla elastica: cada celda puede variar un poco de ancho (pagina curva de un
+    pasaporte: la escala horizontal no es constante), alineada por programacion dinamica y anclada
+    a la rejilla uniforme. Solo se usa si la uniforme no valida (con ella sola la cedula empeora).
 
     El paso de caracter y el borde derecho son comunes a todas las lineas. Busqueda en dos fases:
     primero el desplazamiento horizontal con el paso nominal, luego el paso con ese desplazamiento.
     (Se probo un afinado fino adicional: no mejoro la lectura y costaba ~2x tiempo.)
-    Devuelve (lineas, paso elegido).
     """
     nominal = PITCH_TD1 if len(layouts) == 3 else PITCH_TD3
     # Anclajes del borde derecho de la rejilla: el que da la tinta de la linea y el deducido del
@@ -217,9 +222,91 @@ def decode_lines(
             (pitch * (1 + f) for f in np.arange(-0.02, 0.0201, 0.005)),
             key=lambda q: mean_confidence(right, float(q)),
         )
-    return [
+    uniform = [
         _decode_cells(lp, layouts[i], right, float(pitch)) for i, lp in enumerate(line_probs)
-    ], float(pitch)
+    ]
+    alt = (
+        [_decode_elastic(lp, layouts[i], right, float(pitch)) for i, lp in enumerate(line_probs)]
+        if with_elastic
+        else None
+    )
+    return uniform, float(pitch), alt
+
+
+# --- rejilla elastica ---------------------------------------------------------------------------
+
+ELASTIC_UPSAMPLE = 4  # subdivisiones por paso del reconocedor (resolucion de las fronteras)
+ELASTIC_WIDTH_TOL = 0.2  # cada celda puede medir +-20 % del paso uniforme
+ELASTIC_PENALTY = 1.0  # castigo (en puntos de confianza) por (desviacion relativa)^2
+ELASTIC_EDGE_CELLS = 1.5  # cuanto pueden moverse los extremos de la linea (en celdas)
+
+
+def _decode_elastic(lp: _LineProbs, layout: str, x_right: float, pitch: float) -> Decoded:
+    """Alinea las celdas de la linea con anchos variables (DP) y decodifica cada una."""
+    cells = len(layout)
+    k = ELASTIC_UPSAMPLE
+    fine = np.repeat(lp.alpha[:-1], k, axis=0)  # (N, A)
+    n = fine.shape[0]
+    unit = lp.px_per_step / k  # px por unidad fina
+    w0 = pitch / unit
+    lmin = max(1, int(np.floor(w0 * (1 - ELASTIC_WIDTH_TOL))))
+    lmax = int(np.ceil(w0 * (1 + ELASTIC_WIDTH_TOL)))
+    widths = range(lmin, lmax + 1)
+    # ventanas de cada ancho: windows[l][s] = maximo de fine[s : s + l]
+    windows: dict[int, np.ndarray] = {}
+    cur = fine
+    for width in range(2, lmax + 1):
+        cur = np.maximum(cur[: n - width + 1], fine[width - 1 :])
+        windows[width] = cur
+    windows[1] = fine
+    mask = _mask(layout)
+    start0 = (x_right - cells * pitch - lp.xa) / unit
+    end0 = (x_right - lp.xa) / unit
+    slack = ELASTIC_EDGE_CELLS * w0
+    neg = -1e9
+    prev = np.full(n + 1, neg)
+    lo, hi = int(max(0, start0 - slack)), int(min(n, start0 + slack))
+    prev[lo : hi + 1] = 0.0
+    choice = np.zeros((cells, n + 1), dtype=np.int16)
+    for c in range(cells):
+        new = np.full(n + 1, neg)
+        pick = np.zeros(n + 1, dtype=np.int16)
+        for width in widths:
+            win = windows.get(width)
+            if win is None or win.shape[0] == 0:
+                continue
+            masked = win * mask[c]
+            score = masked.max(axis=1) / np.maximum(masked.sum(axis=1), 1e-9)
+            penalty = ELASTIC_PENALTY * ((width - w0) / w0) ** 2
+            cand = prev[: win.shape[0]] + score - penalty
+            target = slice(width, width + win.shape[0])
+            better = cand > new[target]
+            new[target] = np.where(better, cand, new[target])
+            pick[target] = np.where(better, width, pick[target])
+        prev, choice[c] = new, pick
+    lo_e, hi_e = int(max(0, end0 - slack)), int(min(n, end0 + slack))
+    if hi_e < lo_e or lo > hi:  # la linea cae fuera del recorte: sin alineacion elastica posible
+        return _decode_cells(lp, layout, x_right, pitch)
+    end = lo_e + int(np.argmax(prev[lo_e : hi_e + 1]))
+    if prev[end] < -1e8:
+        return _decode_cells(lp, layout, x_right, pitch)
+    # retroceso: ancho elegido de cada celda, de la ultima a la primera
+    bounds = [end]
+    for c in range(cells - 1, -1, -1):
+        step = int(choice[c, bounds[-1]])
+        if step <= 0:
+            return _decode_cells(lp, layout, x_right, pitch)
+        bounds.append(bounds[-1] - step)
+    bounds.reverse()
+    scores = np.zeros((cells, len(ALPHABET)), np.float32)
+    for c in range(cells):
+        s_, e_ = bounds[c], bounds[c + 1]
+        window = fine[s_:e_].max(axis=0) * mask[c] if e_ > s_ else mask[c] * 0
+        scores[c] = window / max(float(window.sum()), 1e-9)
+    best = scores.argmax(axis=1)
+    text = "".join(ALPHABET[i] for i in best)
+    confidences = scores[np.arange(cells), best]
+    return Decoded(text, float(confidences.mean()), tuple(scores.astype(np.float64)))
 
 
 # --- campos de dominio cerrado (no cubiertos por digitos de control) ---------------------------

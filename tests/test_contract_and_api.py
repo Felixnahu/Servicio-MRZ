@@ -403,3 +403,30 @@ def test_failed_photos_are_saved_only_when_asked(monkeypatch, tmp_path):
     assert post(False).status_code == 422 and not (tmp_path / "fallidas").exists()
     assert post(True).status_code == 422
     assert len(list((tmp_path / "fallidas").glob("*.jpg"))) == 2
+
+
+def test_passport_skips_the_second_photo_when_the_first_was_slow(monkeypatch):
+    import time
+
+    import numpy as np
+
+    from servicio_mrz import app as app_module
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    seen = []
+
+    def slow(self, img, *a, **k):
+        seen.append(1)
+        time.sleep(0.3)
+        return Reading(None)
+
+    monkeypatch.setattr(MrzReader, "read_detailed", slow)
+    monkeypatch.setattr(app_module, "SECOND_PHOTO_MAX_S", 0.1)
+    blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
+    files = {"front": ("f.jpg", blank), "back": ("b.jpg", blank)}
+    for doc_type, expected in (("PASSPORT", 1), ("CI_BO", 2)):
+        seen.clear()
+        settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
+        with TestClient(create_app(settings)) as c:
+            c.post("/mrz/leer", data={"documentType": doc_type}, files=files)
+        assert len(seen) == expected

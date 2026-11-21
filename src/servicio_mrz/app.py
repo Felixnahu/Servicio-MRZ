@@ -47,6 +47,9 @@ from servicio_mrz.ocr import MrzReader
 from servicio_mrz.testpage import PAGE
 
 log = logging.getLogger("servicio_mrz")
+
+# Pasaporte: si la 1a foto ya gasto este tiempo sin leer, no se intenta la 2a (misma pagina).
+SECOND_PHOTO_MAX_S = 6.0
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10
 STREAM_WIDTH = 960
@@ -331,7 +334,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mrz_ms: list[int] = []
         # La MRZ de la cedula 2023 esta en el REVERSO y el anverso nunca la tiene: con dos fotos se
         # prueba primero el reverso (en el totem cada intento sin MRZ cuesta segundos).
+        is_passport = (documentType or "").upper() == "PASSPORT"
         for img in reversed(images) if len(images) == 2 else images:
+            # Un pasaporte llega como dos capturas de la MISMA pagina: si la primera ya costo
+            # varios segundos sin leer, la segunda casi seguro tampoco y solo suma espera.
+            if mrz_ms and is_passport and time.monotonic() - started >= SECOND_PHOTO_MAX_S:
+                break
             t0 = time.monotonic()
             reading = await asyncio.to_thread(reader.read_detailed, img)
             mrz_ms.append(int((time.monotonic() - t0) * 1000))
@@ -379,7 +387,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Las fotos solo salen del totem hacia el KYC configurado en `.env`, y solo en este caso.
         # El KYC no reconoce pasaportes (comprobado en el totem): enviarlos solo suma ~40 s de
         # espera y expone la foto sin ganar nada. Si aqui no se lee, se rechaza de inmediato.
-        is_passport = (documentType or "").upper() == "PASSPORT"
         if settings.kyc_fallback and settings.kyc_base_url and not is_passport:
             # La app corta la espera a los 45 s: el servicio debe contestar antes (aunque sea con
             # KYC_TIEMPO_AGOTADO) para que la app muestre su aviso en vez de abandonar la peticion.
