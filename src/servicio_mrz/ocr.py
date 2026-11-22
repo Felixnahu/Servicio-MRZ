@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from servicio_mrz import birthplace, cardfinder, celldecode, mrzread, oldci, visual
+from servicio_mrz import birthplace, cardfinder, celldecode, mrzread, oldci, orientation, visual
 from servicio_mrz.mrz import MrzResult, parse_mrz
 from servicio_mrz.mrzread import Observation
 from servicio_mrz.textclean import clean_row
@@ -320,10 +320,21 @@ class MrzReader:
 
     def _read_card(self, img: np.ndarray, started: float, deadline: float) -> Reading | None:
         """None si no se localiza ninguna tarjeta."""
+        frame_flipped = False
         try:
             located = cardfinder.locate_card(img)
         except Exception:
             located = None
+        if located is None:
+            # El localizador no es invariante al giro (medido: pierde ~5 % de las fotos al revez y
+            # halla otro ~3 % solo girado). Se prueba el cuadro girado 180 grados antes de rendirse.
+            upside = cv2.rotate(img, cv2.ROTATE_180)
+            try:
+                again = cardfinder.locate_card(upside)
+            except Exception:
+                again = None
+            if again is not None:
+                img, located, frame_flipped = upside, again, True
         height, width = img.shape[:2]
         if located is not None:
             warped = cardfinder.warp_card(img, located)
@@ -333,15 +344,32 @@ class MrzReader:
             if warped is None:
                 return None
             located = warped.located
-        card_norm = tuple((float(x) / width, float(y) / height) for x, y in located.corners)
         engine = self._engine_ready()
         if self._line_recognizer is None:
             self._line_recognizer = celldecode.LineRecognizer(engine)
+        # La tarjeta puede estar al reves (0 / 180 grados): se empieza por el sentido que el
+        # clasificador de giro considera correcto; el otro queda como segunda pasada.
+        flipped = orientation.upside_down(engine, warped.image)
+        if flipped:
+            # El localizador recorta mejor una tarjeta del derecho: girar la FOTO y volver a
+            # localizar suele dar un enderezado mas limpio que girar la tarjeta ya enderezada.
+            upside = cv2.rotate(img, cv2.ROTATE_180)
+            try:
+                again = cardfinder.locate_card(upside)
+            except Exception:
+                again = None
+            if again is not None:
+                retry = cardfinder.warp_card(upside, again)
+                if orientation.upside_down(engine, retry.image) is False:
+                    img, located, warped = upside, again, retry
+                    frame_flipped, flipped = not frame_flipped, False
+        card_norm = tuple((float(x) / width, float(y) / height) for x, y in located.corners)
         best: MrzResult | None = None
         best_rows: tuple[RowBox, ...] = ()
         observation: Observation | None = None
-        for rotated in (False, True):  # la tarjeta puede estar al reves (0 / 180 grados)
-            if rotated and time.monotonic() >= deadline:
+        order = (True, False) if flipped else (False, True)
+        for index, rotated in enumerate(order):
+            if index and time.monotonic() >= deadline:
                 break
             card = cv2.rotate(warped.image, cv2.ROTATE_180) if rotated else warped.image
             read = mrzread.read_card(
@@ -368,8 +396,14 @@ class MrzReader:
                 best_rows = rows
             if best and best.core_checks_ok:
                 break
-            if read.observation is not None and not rotated:
-                break  # texto reconocido con confianza al derecho: no probar el giro de 180 grados
+            if read.observation is not None and index == 0:
+                break  # texto reconocido con confianza en el primer sentido: no probar el otro
+        if frame_flipped:  # volver al cuadro original (las cajas y esquinas son para dibujar)
+            card_norm = tuple((1.0 - x, 1.0 - y) for x, y in card_norm)
+            best_rows = tuple(
+                RowBox(1.0 - r.x1, 1.0 - r.y1, 1.0 - r.x0, 1.0 - r.y0, r.chars, r.used)
+                for r in best_rows
+            )
         elapsed = int((time.monotonic() - started) * 1000)
         return Reading(best, best_rows, 0, elapsed, card_norm, observation, located.aspect)
 

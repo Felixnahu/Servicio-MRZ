@@ -30,7 +30,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from servicio_mrz import birthplace, student, visual
+from servicio_mrz import birthplace, orientation, student, visual
 from servicio_mrz.visual import Box
 
 # Zona del anverso con "No. 1234567": ((y0, y1), (x0, x1)) como fraccion de la tarjeta enderezada.
@@ -142,6 +142,32 @@ def _back(engine: Any, card: np.ndarray) -> OldCiRead | None:
     return read
 
 
+def _upright_card(engine: Any, img: np.ndarray) -> np.ndarray:
+    """Tarjeta enderezada con el texto del derecho.
+
+    Si el clasificador de giro dice que esta al reves (0.1 s), se gira la FOTO y se vuelve a
+    localizar: el localizador recorta mejor una tarjeta del derecho (con la tarjeta enderezada y
+    girada despues la fecha del reverso se perdia en 2 de 5 carnets). Evita gastar una pasada
+    completa de OCR (4-9 s en el totem) leyendo primero la tarjeta girada.
+    """
+    card = visual._prepare(img)
+    upside = orientation.upside_down(engine, card)
+    if upside is None and orientation.sideways(engine, card):
+        # tarjeta puesta de lado: casi todo el texto es vertical. Se gira 90 grados y se decide
+        # entre las dos direcciones con el mismo clasificador de giro.
+        turned = cv2.rotate(card, cv2.ROTATE_90_CLOCKWISE)
+        if orientation.upside_down(engine, turned):
+            return cv2.rotate(turned, cv2.ROTATE_180)
+        return turned
+    if not upside:
+        return card
+    flipped = cv2.rotate(img, cv2.ROTATE_180)
+    again = visual._prepare(flipped)
+    if orientation.upside_down(engine, again) is False:
+        return again
+    return cv2.rotate(card, cv2.ROTATE_180)
+
+
 def read_old_ci(
     engine: Any,
     images: list[np.ndarray],
@@ -165,11 +191,11 @@ def read_old_ci(
     for img in images:
         if late():
             break
-        cards.append(visual._prepare(img))
+        cards.append(_upright_card(engine, img))
     total = OldCiRead()
     # La fecha del reverso es obligatoria; buscar antes el numero opcional agotaba el plazo en el
     # totem. Se prueba primero la ultima foto (la app pide el reverso en 2.o lugar).
-    # Orden de las pasadas de OCR: las DOS fotos sin girar y solo despues las giradas 180 grados.
+    # Orden de las pasadas de OCR: las DOS fotos como estan y solo despues las giradas 180 grados.
     # Cada pasada tarda ~7 s en el totem y el plazo minimo es corto: girar primero la 1.a foto
     # gastaba el plazo antes de mirar la otra cara (donde estaba, p. ej., "UNIVERSITARIO").
     back_idx = None

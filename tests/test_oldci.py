@@ -199,3 +199,42 @@ def test_old_ci_reader_reads_required_back_before_optional_front(monkeypatch):
     assert result is not None and result["fields"]["birthDate"] == "1985-03-15"
     assert result["fields"]["documentNumber"] == "1234567"
     assert calls == ["back", "front"]
+
+
+def test_upside_down_card_is_straightened_before_the_first_ocr_pass(monkeypatch):
+    """Si el clasificador de giro dice que esta al reves, la 1.a pasada ya lee la tarjeta girada."""
+    seen = []
+    card = np.zeros((40, 60, 3), np.uint8)
+    card[:5] = 255  # marca arriba: tras girar 180 grados queda abajo
+    monkeypatch.setattr(oldci.visual, "_prepare", lambda img: card)
+    # siempre "al reves", tambien tras girar la foto: se cae al giro de la tarjeta enderezada
+    monkeypatch.setattr(oldci.orientation, "upside_down", lambda engine, c: True)
+
+    def fake_boxes(engine, c, use_cls=False):
+        seen.append(bool(c[-1].any()))  # True = la marca quedo abajo = se giro
+        return [], 60, 40
+
+    monkeypatch.setattr(oldci.visual, "read_boxes", fake_boxes)
+    assert oldci.read_old_ci(object(), [card]) is None
+    assert seen[0] is True
+
+
+def test_upright_card_relocates_the_flipped_photo_when_the_vote_confirms_it(monkeypatch):
+    """Al reves: se gira la FOTO y se vuelve a localizar (mejor recorte que girar la tarjeta)."""
+    upside = np.full((40, 60, 3), 10, np.uint8)
+    straight = np.full((40, 60, 3), 20, np.uint8)
+    prepared = {}
+
+    def fake_prepare(img):
+        out = straight if img[0, 0, 0] == 99 else upside  # 99 marca la foto ya girada
+        prepared[id(out)] = img
+        return out
+
+    photo = np.zeros((40, 60, 3), np.uint8)
+    flipped = photo.copy()
+    flipped[:] = 99
+    monkeypatch.setattr(oldci.visual, "_prepare", fake_prepare)
+    monkeypatch.setattr(oldci.cv2, "rotate", lambda img, code: flipped)
+    votes = iter([True, False])  # 1.a tarjeta al reves; la re-localizada, del derecho
+    monkeypatch.setattr(oldci.orientation, "upside_down", lambda engine, c: next(votes))
+    assert oldci._upright_card(object(), photo) is straight

@@ -339,6 +339,15 @@ def _prepare(img: np.ndarray) -> np.ndarray:
         located = cardfinder.locate_card(img)
     except Exception:
         located = None
+    if located is None:
+        # el localizador no es invariante al giro: probar el cuadro girado 180 grados
+        upside = cv2.rotate(img, cv2.ROTATE_180)
+        try:
+            again = cardfinder.locate_card(upside)
+        except Exception:
+            again = None
+        if again is not None:
+            return cardfinder.warp_card(upside, again).image
     if located is not None:
         return cardfinder.warp_card(img, located).image
     whole = cardfinder.whole_image_as_card(img)
