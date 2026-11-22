@@ -248,3 +248,42 @@ def test_a_passport_page_is_never_an_old_ci_back():
         Box(10, 90, 300, 120, "JUAN PEREZ GOMEZ"),
     ]
     assert oldci.parse_back(boxes, 600) is None
+
+
+def test_back_number_is_taken_only_as_8_digits_at_the_left_margin_above_the_date():
+    boxes = _back_boxes()
+    boxes += [
+        _b(0.03, 0.10, "11338643", 0.04),  # numero impreso arriba a la izquierda (8 digitos)
+        _b(0.72, 0.10, "138239", 0.04),  # serie a la derecha: no cuenta
+    ]
+    got = oldci.parse_back(boxes, W, today=date(2026, 11, 21))
+    assert got is not None and got.number == "11338643"
+
+
+def test_a_six_digit_box_at_the_left_margin_is_not_a_document_number():
+    boxes = _back_boxes() + [_b(0.03, 0.10, "138239", 0.04)]
+    got = oldci.parse_back(boxes, W, today=date(2026, 11, 21))
+    assert got is not None and got.number == ""
+
+
+def test_a_number_below_the_date_line_is_ignored():
+    boxes = _back_boxes() + [_b(0.03, 0.60, "11338643", 0.04)]
+    got = oldci.parse_back(boxes, W, today=date(2026, 11, 21))
+    assert got is not None and got.number == ""
+
+
+def test_glued_name_is_recovered_with_the_loose_text():
+    glued = _b(0.29, 0.26, "LUISANGELANDRADERAMOS", 0.48)
+    boxes = [b for b in _back_boxes() if "MARIA" not in b.text] + [
+        Box(glued.x0, glued.y0, glued.x1, glued.y1, glued.text, "LUIS ANGEL ANDRADE RAMOS")
+    ]
+    got = oldci.parse_back(boxes, W, today=date(2026, 11, 21))
+    assert got is not None and got.full_name == "LUIS ANGEL ANDRADE RAMOS"
+
+
+def test_glued_name_without_a_loose_text_is_still_not_guessed():
+    boxes = [b for b in _back_boxes() if "MARIA" not in b.text] + [
+        _b(0.29, 0.26, "LUISANGELANDRADERAMOS", 0.48)
+    ]
+    got = oldci.parse_back(boxes, W, today=date(2026, 11, 21))
+    assert got is not None and got.full_name == ""

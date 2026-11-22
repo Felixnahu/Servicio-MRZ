@@ -140,3 +140,38 @@ def test_endpoint_is_422_when_neither_mrz_nor_printed_text_is_read(monkeypatch):
     with client as c:
         res = c.post("/mrz/leer", files={"file": ("f.jpg", buf.tobytes(), "image/jpeg")})
     assert res.status_code == 422 and res.json()["codigo"] == "DOCUMENTO_NO_LEGIBLE"
+
+
+def test_a_small_word_gap_is_only_seen_with_the_loose_threshold():
+    """Palabras pegadas: el hueco (4 px, 0.4 del ancho de letra) no pasa el umbral normal (0.6)
+    pero si el suelto (0.3), que solo se usa como respaldo (Box.loose)."""
+    chars = list("ABCDEF")
+    boxes = []
+    x = 0
+    for i in range(6):
+        boxes.append([[x, 0], [x + 10, 0], [x + 10, 10], [x, 10]])
+        x += 10 + (4 if i == 2 else 0)  # hueco de 4 px entre C y D
+    assert visual._with_spaces("ABCDEF", boxes, chars) == "ABCDEF"
+    assert visual._with_spaces("ABCDEF", boxes, chars, visual.LOOSE_GAP) == "ABC DEF"
+
+
+def test_read_boxes_computes_the_loose_text_only_for_long_glued_words():
+    class Engine:
+        def __call__(self, img, return_word_box=False, use_cls=False):
+            def chars_of(text):
+                return [[[i * 10, 0], [i * 10 + 10, 0], [i * 10 + 10, 10], [i * 10, 10]]
+                        for i in range(len(text))], list(text)
+
+            long_text, short_text = "LUISANGELANDRADERAMOS", "ESTUDIANTE"
+            out = []
+            for k, text in enumerate((long_text, short_text)):
+                cb, ch = chars_of(text)
+                pts = [[0, k * 20], [len(text) * 10, k * 20], [len(text) * 10, k * 20 + 10],
+                       [0, k * 20 + 10]]
+                out.append([pts, text, 0.9, cb, ch])
+            return out, None
+
+    import numpy as np
+
+    boxes, _, _ = visual.read_boxes(Engine(), np.zeros((100, 300, 3), np.uint8), use_cls=False)
+    assert boxes[0].loose != "" and boxes[1].loose == ""  # la corta no se toca

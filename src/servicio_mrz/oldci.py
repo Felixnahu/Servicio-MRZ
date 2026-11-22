@@ -97,12 +97,41 @@ def parse_back(boxes: list[Box], width: float, today: date | None = None) -> Old
         key = visual._key(b.text)
         if any(w in key for w in _NOT_NAME) or any(c.isdigit() for c in b.text):
             continue
+        if len(text.split()) < 2 and b.loose:
+            # palabras pegadas ("LUISANGELANDRADERAMOS"): el respaldo con el hueco mas pequeno
+            text = _strip_label(visual._name(b.loose))
         if len(text.split()) >= 2 and len(text) >= 6:
             candidates.append((b, text))
     name = max(candidates, key=lambda item: item[0].cy)[1] if candidates else ""
     return OldCiRead(
-        born=born, full_name=name, samaipateno=birthplace.from_old_boxes(boxes, line)
+        born=born,
+        full_name=name,
+        number=_back_number(boxes, width, line),
+        samaipateno=birthplace.from_old_boxes(boxes, line),
     )
+
+
+_BACK_NUMBER_DIGITS = (7, 9)  # un 6.o digito aislado arriba a la izquierda NO es el numero (serie)
+_BACK_NUMBER_MAX_X = 0.15  # fraccion del ancho: el numero va pegado al margen izquierdo
+
+
+def _back_number(boxes: list[Box], width: float, date_line: Box) -> str:
+    """Numero de carnet impreso arriba a la izquierda del reverso (respaldo del numero del anverso).
+
+    Solo se acepta una caja que sea SOLO digitos (7 a 9), pegada al margen izquierdo y por encima de
+    la linea de la fecha. Medido: no aparece en todos los carnets (y un numero de 6 digitos en esa
+    zona no coincidio con el del anverso), asi que el anverso manda y esto solo rellena si falta.
+    """
+    for b in sorted(boxes, key=lambda b: (b.y0, b.x0)):
+        if b.x0 > _BACK_NUMBER_MAX_X * width or b.cy >= date_line.cy:
+            continue
+        fixed = b.text.upper().translate(visual._DIGIT_FIX)
+        if not re.fullmatch(r"\s*\d[\d ]*\d\s*", fixed):
+            continue
+        digits = re.sub(r"\D", "", fixed)
+        if _BACK_NUMBER_DIGITS[0] <= len(digits) <= _BACK_NUMBER_DIGITS[1]:
+            return digits
+    return ""
 
 
 def parse_front_number(boxes: list[Box]) -> str:
@@ -224,12 +253,15 @@ def read_old_ci(
     if total.born is None:
         return None
     # El numero se lee solo si queda margen y nunca de la cara ya reconocida como reverso.
+    # el numero del reverso solo rellena si falta el del anverso
+    back_number, total.number = total.number, ""
     for i, card in enumerate(cards):
         if i == back_idx or late():
             continue
         total.number = _front_number(engine, card)
         if total.number:
             break
+    total.number = total.number or back_number
     words = total.full_name.split()
     cut = max(len(words) - 2, 1) if len(words) > 1 else len(words)  # 2 ultimos = apellidos
     return visual._result(

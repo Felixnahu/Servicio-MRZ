@@ -44,6 +44,10 @@ class Box:
     x1: float
     y1: float
     text: str
+    # Mismo texto con los espacios recuperados con un hueco mas pequeno (LOOSE_GAP). Solo se calcula
+    # cuando el texto normal no trae ningun espacio y es largo (palabras pegadas, p. ej. un nombre
+    # en negrita); es un respaldo, el que manda es `text`.
+    loose: str = ""
 
     @property
     def cy(self) -> float:
@@ -63,6 +67,10 @@ def _key(text: str) -> str:
     text = unicodedata.normalize("NFKD", text.upper())
     text = "".join(c for c in text if not unicodedata.combining(c))
     return re.sub(r"[^A-Z0-9]", "", text)
+
+
+def _letters_only(text: str) -> str:
+    return re.sub(r"[^A-Za-z]", "", text)
 
 
 def _name(text: str) -> str:
@@ -288,9 +296,11 @@ def _old_ci(boxes: list[Box], width: float, height: float) -> dict[str, Any] | N
 WORD_GAP = (
     0.6  # hueco entre caracteres, en anchos medios de caracter, a partir del cual hay un espacio
 )
+LOOSE_GAP = 0.3  # umbral del respaldo para palabras pegadas (ver Box.loose)
+_GLUED_MIN_LETTERS = 12  # sin espacios y mas largo que esto: probablemente varias palabras
 
 
-def _with_spaces(text: str, char_boxes: list, chars: list) -> str:
+def _with_spaces(text: str, char_boxes: list, chars: list, gap: float = WORD_GAP) -> str:
     """Reconstruye los espacios que el reconocedor omite, mirando el hueco entre caracteres.
 
     El OCR a veces une palabras en negrita ('MARIALUISA'): su texto no trae el espacio, pero las
@@ -302,7 +312,7 @@ def _with_spaces(text: str, char_boxes: list, chars: list) -> str:
     widths = [x1 - x0 for (x0, x1), c in zip(spans, chars, strict=True) if c.strip()]
     if not widths:
         return text
-    limit = WORD_GAP * float(np.median(widths))
+    limit = gap * float(np.median(widths))
     out = []
     for k, ch in enumerate(chars):
         if k and ch.strip() and chars[k - 1].strip() and spans[k][0] - spans[k - 1][1] > limit:
@@ -323,11 +333,14 @@ def read_boxes(
     boxes = []
     for item in result or []:
         points, text = item[0], item[1]
+        loose = ""
         if len(item) >= 5:
             text = _with_spaces(text, item[3], item[4])
+            if " " not in text and len(_letters_only(text)) >= _GLUED_MIN_LETTERS:
+                loose = _with_spaces(text, item[3], item[4], LOOSE_GAP)
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
-        boxes.append(Box(min(xs), min(ys), max(xs), max(ys), text))
+        boxes.append(Box(min(xs), min(ys), max(xs), max(ys), text, loose))
     return boxes, float(img.shape[1]), float(img.shape[0])
 
 
