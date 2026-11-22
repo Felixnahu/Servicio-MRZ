@@ -350,6 +350,13 @@ class MrzReader:
         # La tarjeta puede estar al reves (0 / 180 grados): se empieza por el sentido que el
         # clasificador de giro considera correcto; el otro queda como segunda pasada.
         flipped, firmness = orientation.assess(engine, warped.image)
+        if flipped is None and orientation.sideways(engine, warped.image):
+            # Tarjeta puesta de lado: casi todo su texto es vertical y la MRZ solo se lee en
+            # horizontal, asi que las dos lecturas (0 y 180 grados) gastaban 10-17 s en el totem
+            # sin poder acertar. Sigue el lector de carnet antiguo/universitario, que la endereza.
+            side_norm = tuple((float(x) / width, float(y) / height) for x, y in located.corners)
+            elapsed = int((time.monotonic() - started) * 1000)
+            return Reading(None, (), 0, elapsed, side_norm, None, located.aspect)
         if flipped:
             # El localizador recorta mejor una tarjeta del derecho: girar la FOTO y volver a
             # localizar suele dar un enderezado mas limpio que girar la tarjeta ya enderezada.

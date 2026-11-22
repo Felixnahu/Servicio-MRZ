@@ -69,3 +69,27 @@ def test_mostly_vertical_text_means_sideways():
 def test_horizontal_text_is_not_sideways():
     assert orientation.sideways(FakeEngine(["0", "0", "0", "0"]), CARD) is False
     assert orientation.sideways(FakeEngine([], boxes=[]), CARD) is False
+
+
+def test_a_sideways_card_skips_the_mrz_stage(monkeypatch):
+    """Texto vertical: la MRZ no se lee en 0/180 grados, no se gastan segundos intentandolo."""
+    from types import SimpleNamespace
+
+    from servicio_mrz import ocr
+
+    located = SimpleNamespace(corners=((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)), aspect=1.5)
+    warped = SimpleNamespace(image=np.zeros((680, 1024, 3), np.uint8), located=located)
+
+    def forbidden(*a, **k):
+        raise AssertionError("no debe leer MRZ en una tarjeta de lado")
+
+    monkeypatch.setattr(ocr.cardfinder, "locate_card", lambda img: located)
+    monkeypatch.setattr(ocr.cardfinder, "warp_card", lambda img, loc: warped)
+    monkeypatch.setattr(ocr.orientation, "assess", lambda engine, card: (None, 0.0))
+    monkeypatch.setattr(ocr.orientation, "sideways", lambda engine, card: True)
+    monkeypatch.setattr(ocr.mrzread, "read_card", forbidden)
+    monkeypatch.setattr(ocr.celldecode, "LineRecognizer", lambda engine: object())
+    reader = ocr.MrzReader()
+    monkeypatch.setattr(reader, "_engine_ready", lambda: object())
+    reading = reader.read_detailed(np.zeros((1080, 1920, 3), np.uint8))
+    assert reading.result is None and reading.card is not None and reading.card_aspect == 1.5
