@@ -49,7 +49,7 @@ from servicio_mrz.testpage import PAGE
 log = logging.getLogger("servicio_mrz")
 
 # Si la 1a foto ya mostro una MRZ y gasto este tiempo sin leerla, no se intenta la 2a.
-OLD_CI_MIN_S = 10.0  # trabajo minimo que se da al OCR del carnet antiguo
+OLD_CI_MIN_S = 14.0  # trabajo minimo que se da al OCR del carnet antiguo
 BIRTHPLACE_MIN_LEFT_S = 8.0  # margen minimo (hasta el corte de la app) para leer el lugar
 MAX_UPLOAD = 10 * 1024 * 1024
 STREAM_FPS = 10

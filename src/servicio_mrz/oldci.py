@@ -169,22 +169,27 @@ def read_old_ci(
     total = OldCiRead()
     # La fecha del reverso es obligatoria; buscar antes el numero opcional agotaba el plazo en el
     # totem. Se prueba primero la ultima foto (la app pide el reverso en 2.o lugar).
+    # Orden de las pasadas de OCR: las DOS fotos sin girar y solo despues las giradas 180 grados.
+    # Cada pasada tarda ~7 s en el totem y el plazo minimo es corto: girar primero la 1.a foto
+    # gastaba el plazo antes de mirar la otra cara (donde estaba, p. ej., "UNIVERSITARIO").
     back_idx = None
-    for i in reversed(range(len(cards))):
-        if total.born is not None:
+    for rotated in (False, True):
+        for i in reversed(range(len(cards))):
+            if total.born is not None:
+                break
+            if late():
+                break
+            card = cv2.rotate(cards[i], cv2.ROTATE_180) if rotated else cards[i]
+            part = _back(engine, card)
+            if part is not None and part.student:
+                if detect_student:
+                    return student.result()
+                continue
+            if part is not None:
+                total.merge(part)
+                back_idx = i
+        if total.born is not None or late():
             break
-        if late():
-            break
-        part = _back(engine, cards[i])
-        if part is None and not late():
-            part = _back(engine, cv2.rotate(cards[i], cv2.ROTATE_180))
-        if part is not None and part.student:
-            if detect_student:
-                return student.result()
-            continue
-        if part is not None:
-            total.merge(part)
-            back_idx = i
     if total.born is None:
         return None
     # El numero se lee solo si queda margen y nunca de la cara ya reconocida como reverso.

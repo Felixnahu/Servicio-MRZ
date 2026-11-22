@@ -67,3 +67,47 @@ def test_edu_domain_counts_but_names_that_contain_edu_do_not():
 
 def test_univ_words_that_are_not_about_universities_do_not_count():
     assert not student.detect(boxes("DECLARACION UNIVERSAL", "UNIVERSO"))
+
+
+def test_both_photos_are_read_unrotated_before_any_rotated_pass(monkeypatch):
+    """En el totem cada pasada de OCR tarda ~7 s y el plazo es corto: girar la 1.a foto antes de
+    mirar la otra gastaba el plazo sin leer el anverso (caso real de un carnet universitario)."""
+    monkeypatch.setattr(oldci.visual, "_prepare", lambda img: img)
+    order = []
+
+    def fake_back(engine, card):
+        tag = int(card[0, 0, 0] or card[-1, -1, 0])
+        order.append((tag, card[0, 0, 0] == 0))  # (que foto, girada?)
+        return None
+
+    monkeypatch.setattr(oldci, "_back", fake_back)
+    a = np.zeros((40, 60, 3), np.uint8)
+    a[0, 0, 0] = 1
+    b = np.zeros((40, 60, 3), np.uint8)
+    b[0, 0, 0] = 2
+    assert oldci.read_old_ci(object(), [a, b]) is None
+    assert order == [(2, False), (1, False), (2, True), (1, True)]
+
+
+def test_with_time_for_two_passes_the_second_is_the_other_face(monkeypatch):
+    """Con tiempo para 2 pasadas (como en el totem), la 2.a es la OTRA cara, no la misma girada."""
+    import time
+
+    monkeypatch.setattr(oldci.visual, "_prepare", lambda img: img)
+    seen = []
+    clock = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
+    def fake_back(engine, card):
+        seen.append(int(card[0, 0, 0] or card[-1, -1, 0]))
+        clock["t"] += 7.0  # lo que tarda una pasada en el totem
+        return oldci.OldCiRead(student=True) if len(seen) == 2 else None
+
+    monkeypatch.setattr(oldci, "_back", fake_back)
+    a = np.zeros((40, 60, 3), np.uint8)
+    a[0, 0, 0] = 1
+    b = np.zeros((40, 60, 3), np.uint8)
+    b[0, 0, 0] = 2
+    res = oldci.read_old_ci(object(), [a, b], deadline=10.0)
+    assert res is not None and res["suggestedCategory"] == "universitario"
+    assert seen == [2, 1]  # reverso y despues anverso: la mitad del tiempo no se gasta girando
