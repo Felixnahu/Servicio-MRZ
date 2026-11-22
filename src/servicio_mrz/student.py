@@ -5,6 +5,8 @@ cedulas y pasaportes porque es un valor del campo "profesion u ocupacion", y `CA
 letra de `CABRERA`/`CARRERA`, apellidos comunes. Por eso NO bastan solas:
 
 - Fuerte: UNIVERSITARIO o UNIVERSIDAD (tolera 1-2 letras mal leidas). Una sola basta.
+- Fuerte: una palabra que EMPIEZA por UNIV (UNIVALLE, UNIVERSIDAD...), salvo UNIVERSAL/UNIVERSO,
+  o un dominio `.edu` (cada universidad se escribe distinto: hay carnets sin "universitario").
 - Debil: CARRERA, ESTUDIANTE y FACULTAD, EXACTAS. Hacen falta las tres a la vez (una cedula con
   apellido Carrera y ocupacion Estudiante tiene dos, pero no la facultad).
 
@@ -22,6 +24,9 @@ if TYPE_CHECKING:
     from servicio_mrz.visual import Box
 
 STRONG = ("UNIVERSITARIO", "UNIVERSIDAD")
+_NOT_UNIV = ("UNIVERSAL", "UNIVERSO")  # empiezan por UNIV y no son de universidad
+_UNIV_WORD = re.compile(r"\bUNIV[A-Z]{2,}")
+_EDU_DOMAIN = re.compile(r"\.\s?EDU\b")  # est.univalle.edu, upds.edu.bo
 WEAK = ("CARRERA", "ESTUDIANTE", "FACULTAD")
 STRONG_RATIO = 0.85  # 13 letras: tolera 1-2 errores del OCR
 CATEGORY = "universitario"
@@ -45,6 +50,11 @@ def detect(boxes: list[Box]) -> bool:
     """True si las cajas de texto de una tarjeta son de un carnet universitario."""
     key = "".join(_letters(b.text) for b in boxes)
     if any(_has(key, w) for w in STRONG):
+        return True
+    raw = " ".join(b.text.upper() for b in boxes)
+    if _EDU_DOMAIN.search(raw) or any(
+        not w.startswith(_NOT_UNIV) for w in _UNIV_WORD.findall(raw)
+    ):
         return True
     return all(w in key for w in WEAK)  # exactas: sin tolerancia (evita CABRERA)
 

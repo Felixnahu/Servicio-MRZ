@@ -52,3 +52,18 @@ def test_old_ci_reader_returns_the_student_result_without_extra_ocr(monkeypatch)
     assert res is not None and res["suggestedCategory"] == "universitario"
     assert len(calls) == 1  # se detiene en la primera lectura
     assert oldci.read_old_ci(object(), [img, img], detect_student=False) is None
+
+
+def test_university_name_starting_with_univ_counts():
+    """Hay carnets que no dicen 'universitario' (el de Univalle trae solo el nombre)."""
+    assert student.detect(boxes("UNIVALLE", "SEDE ACADEMICA", "ING. BIOMEDICA"))
+    assert student.detect(boxes("est.univalle.edu", "Sitio web"))
+
+
+def test_edu_domain_counts_but_names_that_contain_edu_do_not():
+    assert student.detect(boxes("InfoUpds.SantaCruz@upds.edu.bo"))
+    assert not student.detect(boxes("NOMBRES: EDUARDO", "LUGAR: EDUCACION"))
+
+
+def test_univ_words_that_are_not_about_universities_do_not_count():
+    assert not student.detect(boxes("DECLARACION UNIVERSAL", "UNIVERSO"))
