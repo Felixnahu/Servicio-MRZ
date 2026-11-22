@@ -28,7 +28,7 @@ function Get-Cpu {
     foreach ($p in Get-Process) {
         try { $t[$p.Id] = @($p.TotalProcessorTime.TotalSeconds, $p.ProcessName) } catch { }
     }
-    $t
+    @{ hora = Get-Date; procesos = $t }
 }
 
 $dir = Split-Path -Parent $Salida
@@ -43,26 +43,28 @@ $ant = Get-Cpu
 $fin = (Get-Date).AddMinutes($Minutos)
 try {
     while ((Get-Date) -lt $fin) {
-        $t0 = Get-Date
         Start-Sleep -Milliseconds ([int]($Cada * 1000))
-        $dt = ((Get-Date) - $t0).TotalSeconds
         $act = Get-Cpu
+        # el intervalo real es entre las dos FOTOS de procesos (con el equipo saturado el muestreo
+        # tarda mas de lo previsto; dividir por el tiempo teorico inflaba los porcentajes)
+        $dt = ($act.hora - $ant.hora).TotalSeconds
+        $actP = $act.procesos; $antP = $ant.procesos
         # procesos de python que ejecutan el servicio (y el lanzador uv que los arranca)
         $svc = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='uv.exe'" |
             Where-Object { $_.CommandLine -like "*servicio_mrz*" } | ForEach-Object { $_.ProcessId })
         $suma = @{}; foreach ($g in $grupos.Keys) { $suma[$g] = 0.0 }
         $suma["otros"] = 0.0
         $porProceso = @{}
-        foreach ($id in $act.Keys) {
-            if (-not $ant.ContainsKey($id)) { continue }
-            $d = ($act[$id][0] - $ant[$id][0]) / ($dt * $nucleos) * 100
+        foreach ($id in $actP.Keys) {
+            if (-not $antP.ContainsKey($id)) { continue }
+            $d = ($actP[$id][0] - $antP[$id][0]) / ($dt * $nucleos) * 100
             if ($d -lt 0) { continue }
             $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
             if (-not $proc) { continue }
             $grupo = "otros"
             foreach ($g in $grupos.Keys) { if (& $grupos[$g] $proc $svc) { $grupo = $g; break } }
             $suma[$grupo] += $d
-            $porProceso[$act[$id][1]] = [double]$porProceso[$act[$id][1]] + $d
+            $porProceso[$actP[$id][1]] = [double]$porProceso[$actP[$id][1]] + $d
         }
         $total = ($suma.Values | Measure-Object -Sum).Sum
         $libre = [int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1KB)
@@ -79,6 +81,7 @@ try {
             Out-File $Salida -Append -Encoding ascii
         Write-Host ("{0}  CPU {1,3:N0}%  servicio {2,3:N0}  app {3,3:N0}  anydesk {4,3:N0}  defender {5,3:N0}  RAM libre {6} MB" -f
             $f.hora, $f.total, $f.servicio, $f.app, $f.anydesk, $f.defender, $f.libre)
+        if ($dt -gt ($Cada * 2)) { Write-Host ("   (intervalo real {0:N0} s: el equipo estaba saturado)" -f $dt) }
         $ant = $act
     }
 } finally {
