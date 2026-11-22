@@ -382,3 +382,32 @@ def test_birthplace_is_read_after_a_valid_mrz_even_when_the_mrz_was_slow(monkeyp
         assert res.status_code == 200 and len(calls) == expected, deadline
         assert res.json()["isSamaipateno"] is (True if expected else None)
 
+
+
+def test_conform_matches_the_backend_reading_dto():
+    """Misma forma que `DocumentReadingResponseDto`; categorias solo las del enum del backend."""
+    student = contract.conform(
+        {
+            "documentType": "STUDENT_CARD",
+            "suggestedCategory": "universitario",
+            "requiresManualEntry": True,
+            "status": "REVIEW",
+            "reasons": ["DATOS_NO_LEIDOS"],
+        }
+    )
+    assert student["suggestedCategory"] is None  # 'universitario' no esta en KycCategory
+    assert student["requiresManualEntry"] is False
+    assert student["suggestedTicketTypeId"] is None and student["violations"] == []
+    assert student["status"] == "REVIEW"
+    assert student["diagnostics"] == {"reasons": ["DATOS_NO_LEIDOS"]}
+    mrz = contract.conform({"documentType": "CI_BO", "suggestedCategory": "nacional_adulto"})
+    assert mrz["suggestedCategory"] == "nacional_adulto"  # una categoria valida se conserva
+    assert mrz["status"] == "OK" and mrz["diagnostics"] == {"reasons": []}
+
+
+def test_every_kyc_category_the_service_can_suggest_is_known_to_the_backend():
+    cases = [("BOL", 30, None), ("BOL", 5, None), ("ARG", 30, None), ("ARG", 5, None)]
+    cases.append(("BOL", 30, True))
+    for nationality, age, samaipateno in cases:
+        category = contract.suggested_category(nationality, age, samaipateno)
+        assert category in contract.KYC_CATEGORIES

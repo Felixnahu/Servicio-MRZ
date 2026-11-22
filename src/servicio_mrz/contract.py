@@ -84,3 +84,33 @@ def from_mrz(
         "mrzChecks": result.checks,
         "mrzFusedFrames": result.fused_frames,
     }
+
+
+# Categorias que conoce el backend (`KycCategory` en access-control-back, enum cerrado): cualquier
+# otro valor llega alli como null. Son tambien los `externalCode` con que la app busca la entrada.
+KYC_CATEGORIES = frozenset(
+    {"samaipateno", "nacional_adulto", "nacional_menor", "extranjero_adulto", "extranjero_menor"}
+)
+
+
+def conform(body: dict[str, Any]) -> dict[str, Any]:
+    """Deja la respuesta con la forma de `DocumentReadingResponseDto` del backend (sin tocarlo).
+
+    - `suggestedCategory`: solo valores del enum del backend o null. Un carnet universitario NO
+      lleva categoria: su senal es `documentType = STUDENT_CARD` (la regla del ticket
+      'Universitario' es `documentTypes: ["STUDENT_CARD"]`).
+    - `requiresManualEntry`: false. En el backend un 200 nunca lo trae en true (true es un 422
+      DOCUMENTO_NO_LEIDO); que faltan datos se dice con `status: REVIEW`, `reasons` y los campos
+      vacios, que la app completa a mano.
+    - Se completan `suggestedTicketTypeId`, `violations`, `status` y `diagnostics.reasons`.
+    Los demas campos (`reasons`, `source`, `mrzChecks`...) se conservan.
+    """
+    out = dict(body)
+    if out.get("suggestedCategory") not in KYC_CATEGORIES:
+        out["suggestedCategory"] = None
+    out.setdefault("suggestedTicketTypeId", None)
+    out.setdefault("violations", [])
+    out["requiresManualEntry"] = False
+    out.setdefault("status", "OK")
+    out.setdefault("diagnostics", {"reasons": list(out.get("reasons") or [])})
+    return out

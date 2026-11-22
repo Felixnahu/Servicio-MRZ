@@ -341,6 +341,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app_type = (documentType or "").strip().upper() or None
         try:
             out = await _leer(file, front, back)
+            if isinstance(out, dict):
+                out = contract.conform(out)  # forma exacta del DTO de lectura del backend
         except HTTPException as e:
             ms = int((time.monotonic() - started) * 1000)
             log.warning(

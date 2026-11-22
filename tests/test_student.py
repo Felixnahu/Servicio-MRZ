@@ -34,8 +34,10 @@ def test_the_three_weak_words_together_do_count():
 
 def test_result_has_the_contract_fields_and_asks_for_manual_entry():
     r = student.result()
-    assert r["documentType"] == "STUDENT_CARD" and r["suggestedCategory"] == "universitario"
-    assert r["requiresManualEntry"] is True and r["fields"]["birthDate"] == ""
+    # el backend no tiene categoria universitaria (enum cerrado): la senal es el tipo de documento
+    assert r["documentType"] == "STUDENT_CARD" and r["suggestedCategory"] is None
+    assert r["requiresManualEntry"] is False and r["fields"]["birthDate"] == ""
+    assert r["status"] == "REVIEW" and "DATOS_NO_LEIDOS" in r["reasons"]
     assert r["age"] is None and r["isSamaipateno"] is None and r["categoryMatches"] is None
 
 
@@ -50,7 +52,7 @@ def test_old_ci_reader_returns_the_student_result_without_extra_ocr(monkeypatch)
     monkeypatch.setattr(oldci.visual, "read_boxes", fake_boxes)
     img = np.full((400, 600, 3), 200, np.uint8)
     res = oldci.read_old_ci(object(), [img, img])
-    assert res is not None and res["suggestedCategory"] == "universitario"
+    assert res is not None and res["documentType"] == "STUDENT_CARD"
     assert len(calls) == 1  # se detiene en la primera lectura
     assert oldci.read_old_ci(object(), [img, img], detect_student=False) is None
 
@@ -110,7 +112,7 @@ def test_with_time_for_two_passes_the_second_is_the_other_face(monkeypatch):
     b = np.zeros((40, 60, 3), np.uint8)
     b[0, 0, 0] = 2
     res = oldci.read_old_ci(object(), [a, b], deadline=10.0)
-    assert res is not None and res["suggestedCategory"] == "universitario"
+    assert res is not None and res["documentType"] == "STUDENT_CARD"
     assert seen == [2, 1]  # reverso y despues anverso: la mitad del tiempo no se gasta girando
 
 
@@ -129,3 +131,33 @@ def test_estudiante_on_an_id_back_is_not_a_student_card_even_if_labels_are_unrea
 def test_estudiante_on_a_crowded_page_is_not_a_student_card():
     texts = ["ESTUDIANTE"] + [f"LINEA {i}" for i in range(13)]
     assert not student.detect(boxes(*texts))
+
+
+def test_endpoint_answers_a_student_card_in_the_shape_of_the_backend_dto(monkeypatch):
+    """El 200 de un carnet universitario calza con `DocumentReadingResponseDto` del backend."""
+    import cv2
+    from fastapi.testclient import TestClient
+
+    from servicio_mrz.app import create_app
+    from servicio_mrz.config import Settings
+    from servicio_mrz.ocr import MrzReader, Reading
+
+    corners = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
+    monkeypatch.setattr(
+        MrzReader, "read_detailed",
+        lambda self, img, *a, **k: Reading(None, card=corners, card_aspect=1.5),
+    )
+    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, *a, **k: student.result())
+    ok, buf = cv2.imencode(".jpg", np.full((400, 600, 3), 200, np.uint8))
+    files = {"front": ("f.jpg", buf.tobytes()), "back": ("b.jpg", buf.tobytes())}
+    settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
+    with TestClient(create_app(settings)) as c:
+        res = c.post("/mrz/leer", data={"documentType": "STUDENT_CARD"}, files=files)
+    body = res.json()
+    assert res.status_code == 200
+    assert body["documentType"] == "STUDENT_CARD"  # lo que valida la regla del ticket 'STUDENT'
+    assert body["suggestedCategory"] is None  # 'universitario' no esta en el enum del backend
+    assert body["suggestedTicketTypeId"] is None and body["violations"] == []
+    assert body["requiresManualEntry"] is False and body["status"] == "REVIEW"
+    assert body["diagnostics"]["reasons"] == ["CARNET_UNIVERSITARIO_DETECTADO", "DATOS_NO_LEIDOS"]
+    assert all(body["fields"][k] == "" for k in body["fields"])

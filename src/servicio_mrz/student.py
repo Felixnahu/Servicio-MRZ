@@ -42,7 +42,6 @@ _ID_LABELS = (
 _MRZ_FILLER = "<<"  # relleno de una MRZ ("I<BOL...<<<<"): ninguna tarjeta de estudiante lo trae
 MAX_BOXES_ALONE = 12
 STRONG_RATIO = 0.85  # 13 letras: tolera 1-2 errores del OCR
-CATEGORY = "universitario"
 
 
 def _letters(text: str) -> str:
@@ -80,7 +79,7 @@ def detect(boxes: list[Box]) -> bool:
 
 
 def result() -> dict:
-    """JSON del contrato: solo la categoria; el resto de datos se completa a mano en la app."""
+    """JSON del contrato: solo el TIPO (`STUDENT_CARD`); el resto de datos se completa a mano."""
     return {
         "documentType": "STUDENT_CARD",
         "documentModel": "student-card",
@@ -94,10 +93,10 @@ def result() -> dict:
         "age": None,
         "isAdult": None,
         "isSamaipateno": None,
-        "suggestedCategory": CATEGORY,
+        "suggestedCategory": None,  # el backend no tiene categoria 'universitario': va en el tipo
         "categoryMatches": None,
         "source": "ocr",
-        "requiresManualEntry": True,
+        "requiresManualEntry": False,  # un 200 nunca lo trae en true (ver contract.conform)
         "status": "REVIEW",
         "reasons": ["CARNET_UNIVERSITARIO_DETECTADO", "DATOS_NO_LEIDOS"],
     }
