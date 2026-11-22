@@ -58,8 +58,12 @@ CONFIGS = [
 
 def main() -> None:
     folder = Path(sys.argv[1] if len(sys.argv) > 1 else "data/fallidas")
+    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+    fronts = sorted(folder.glob("*_0.jpg"))
+    if len(fronts) > limit:
+        fronts = [fronts[i * len(fronts) // limit] for i in range(limit)]
     pairs = []
-    for front in sorted(folder.glob("*_0.jpg")):
+    for front in fronts:
         back = front.with_name(front.name.replace("_0.jpg", "_1.jpg"))
         imgs = [cv2.imread(str(p)) for p in (front, back) if p.exists()]
         pairs.append([i for i in imgs if i is not None])
