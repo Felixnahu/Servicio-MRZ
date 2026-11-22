@@ -10,8 +10,9 @@ Cada hipotesis se decodifica celda por celda y se parsea; gana la que valida los
 
 from __future__ import annotations
 
+import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,11 @@ from servicio_mrz.mrzlines import LineSegment
 # Una MRZ legible da >= 0.84 con la 1a variante y el texto normal <= 0.47 (medido). Por debajo de
 # este umbral no se prueban mas variantes: no hay MRZ legible y el OCR visual toma el relevo.
 NO_MRZ_CONFIDENCE = 0.55  # medido: bajo esto la 1a variante lee basura y las demas tambien
+# Correccion de una cifra con los digitos de control (ver repair_checks): solo se prueban las celdas
+# donde el reconocedor dudo de verdad (la 2.a opcion llega al 50 % de la elegida y a 12 % absoluto).
+REPAIR_MIN_RATIO = 0.5
+REPAIR_MIN_P = 0.12
+REPAIR_MAX_CANDIDATES = 12
 PREFERRED_BONUS = 1.2  # a igual lectura, se prefiere el formato que sugiere la forma de la tarjeta
 EDGE_STRIP_RATIO = 0.7  # una banda final mas fina que esto (vs la mediana) es borde, no linea
 MIN_CONFIDENCE = 0.45  # por debajo, el reconocedor estaba "adivinando" (medido: ~0.6 vs ~0.2)
@@ -144,6 +150,50 @@ def read_card(
     return CardRead(best.result, best.segments, best.confidence, best.method, observation)
 
 
+def repair_checks(texts: list[str], scores: list[np.ndarray]) -> MrzResult | None:
+    """Corrige UNA cifra mal leida cuando los digitos de control no cuadran.
+
+    El OCR a veces duda entre dos cifras parecidas (6/9, 8/0...) y elige la equivocada: el numero
+    de documento deja de validar aunque todo lo demas este bien (caso real: cedula 2023 con
+    confianza 0.96 no leida porque 6 se leyo como 9, con 0.34 contra 0.27). Se prueba, de la celda
+    mas dudosa a la menos, sustituirla por su 2.a o 3.a opcion; solo se acepta si TODOS los
+    controles (numero, nacimiento, vencimiento y el compuesto) validan y la forma es plausible.
+    Con el compuesto de por medio una sustitucion equivocada pasa por azar ~1 de cada 100 y solo
+    se prueban las celdas dudosas (2-5 por foto), asi que el riesgo es del orden del 1 %.
+    """
+    base = parse_mrz(texts)
+    if base is None or base.core_checks_ok:
+        return None
+    alphabet = celldecode.ALPHABET
+    options: list[tuple[float, int, int, str]] = []
+    for line, (text, probs) in enumerate(zip(texts, scores, strict=True)):
+        for cell, char in enumerate(text):
+            row = probs[cell]
+            chosen = float(row[alphabet.index(char)])
+            for index in np.argsort(-row)[:3]:
+                alt = alphabet[int(index)]
+                p = float(row[index])
+                if alt != char and p >= max(REPAIR_MIN_P, REPAIR_MIN_RATIO * chosen):
+                    cost = math.log(p + 1e-9) - math.log(chosen + 1e-9)
+                    options.append((cost, line, cell, alt))
+    options.sort(reverse=True)  # menor penalizacion primero
+    for _, line, cell, alt in options[:REPAIR_MAX_CANDIDATES]:
+        fixed = list(texts)
+        fixed[line] = fixed[line][:cell] + alt + fixed[line][cell + 1 :]
+        result = parse_mrz(fixed)
+        if result and result.core_checks_ok and result.checks.get("composite", False):
+            return replace(result, repaired=1)
+    return None
+
+
+def _parse(texts: list[str], scores: list[np.ndarray]) -> MrzResult | None:
+    """parse_mrz y, si no valida por una cifra dudosa, esa misma lectura con la cifra corregida."""
+    result = parse_mrz(texts)
+    if result is not None and not result.core_checks_ok:
+        result = repair_checks(texts, scores) or result
+    return result
+
+
 def _read_variant(
     engine: Any,
     recognizer: celldecode.LineRecognizer,
@@ -187,7 +237,7 @@ def _read_variant(
         texts = celldecode.snap_fields(
             [d.text for d in decoded], [np.stack(d.scores) for d in decoded], count
         )
-        result = parse_mrz(texts)
+        result = _parse(texts, [np.stack(d.scores) for d in decoded])
         for alt in alternatives:
             if result and result.core_checks_ok:
                 break
@@ -196,7 +246,7 @@ def _read_variant(
             texts_alt = celldecode.snap_fields(
                 [d.text for d in alt], [np.stack(d.scores) for d in alt], count
             )
-            result_alt = parse_mrz(texts_alt)
+            result_alt = _parse(texts_alt, [np.stack(d.scores) for d in alt])
             if result_alt and result_alt.core_checks_ok:
                 decoded, result = alt, result_alt
                 confidence = float(np.mean([d.confidence for d in decoded]))

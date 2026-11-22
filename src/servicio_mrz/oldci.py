@@ -231,11 +231,18 @@ def read_old_ci(
     def late() -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
-    cards = []
-    for img in images:
-        if late():
-            break
-        cards.append(_upright_card(engine, img))
+    cache: dict[int, np.ndarray] = {}
+
+    def card_at(i: int) -> np.ndarray | None:
+        """Tarjeta enderezada de la foto i, preparada al pedirla y no antes. Preparar las dos de
+        entrada costaba ~3 s en el totem antes del primer OCR (el carnet al reves del intento
+        0007 se quedo sin tiempo)."""
+        if i not in cache:
+            if late():
+                return None
+            cache[i] = _upright_card(engine, images[i])
+        return cache[i]
+
     total = OldCiRead()
     # La fecha del reverso es obligatoria; buscar antes el numero opcional agotaba el plazo en el
     # totem. Se prueba primero la ultima foto (la app pide el reverso en 2.o lugar).
@@ -244,12 +251,15 @@ def read_old_ci(
     # gastaba el plazo antes de mirar la otra cara (donde estaba, p. ej., "UNIVERSITARIO").
     back_idx = None
     for rotated in (False, True):
-        for i in reversed(range(len(cards))):
+        for i in reversed(range(len(images))):
             if total.born is not None:
                 break
             if late():
                 break
-            card = cv2.rotate(cards[i], cv2.ROTATE_180) if rotated else cards[i]
+            base = card_at(i)
+            if base is None:
+                break
+            card = cv2.rotate(base, cv2.ROTATE_180) if rotated else base
             part = _back(engine, card)
             if part is not None and part.student:
                 if detect_student:
@@ -265,8 +275,11 @@ def read_old_ci(
     # El numero se lee solo si queda margen y nunca de la cara ya reconocida como reverso.
     # el numero del reverso solo rellena si falta el del anverso
     back_number, total.number = total.number, ""
-    for i, card in enumerate(cards):
+    for i in range(len(images)):
         if i == back_idx or late():
+            continue
+        card = card_at(i)
+        if card is None:
             continue
         total.number = _front_number(engine, card)
         if total.number:

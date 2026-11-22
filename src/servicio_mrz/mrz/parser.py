@@ -40,6 +40,7 @@ class MrzResult:
     optional_data: str
     checks: dict[str, bool] = field(default_factory=dict)
     fused_frames: int = 0  # >0: lectura obtenida fusionando las probabilidades de N cuadros
+    repaired: int = 0  # 1: una cifra dudosa se corrigio con los digitos de control
 
     @property
     def plausible(self) -> bool:
