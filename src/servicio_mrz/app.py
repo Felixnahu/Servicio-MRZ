@@ -29,13 +29,14 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from servicio_mrz import birthplace, camera_profile, contract
+from servicio_mrz import birthplace, camera_profile, contract, reqlog
 from servicio_mrz.calibration import Calibrator
 from servicio_mrz.camera import Camera, device_names, encode_jpeg
 from servicio_mrz.config import Settings
@@ -306,6 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/mrz/leer")
     async def read_mrz(
+        request: Request,
         file: Annotated[UploadFile | None, File()] = None,
         front: Annotated[UploadFile | None, File()] = None,
         back: Annotated[UploadFile | None, File()] = None,
@@ -321,8 +323,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         - Sin archivos: el servicio toma la foto de su propia camara y la lee.
         200 = JSON del contrato. 422 = no se leyo, con `pista`: `sin_mrz` (se ve un documento pero
         sin MRZ: dar la vuelta a la tarjeta) o `no_legible` (mejorar luz/enfoque/posicion).
-        Las fotos no se guardan ni se registran sus datos.
+        Las fotos no se guardan ni se registran sus datos. Cada peticion deja en el log una linea
+        `peticion:` y otra `respuesta:` (ver reqlog.py) con lo que llego y lo que se devolvio.
         """
+        token = reqlog.start()
+        started = time.monotonic()
+        length = request.headers.get("content-length")
+        log.info(
+            reqlog.describe_request(
+                photos=sum(f is not None for f in (file, front, back)),
+                size=int(length) if length and length.isdigit() else None,
+                app_type=(documentType or "").strip().upper() or None,
+                has_category=bool(ticketTypeId),
+                agent=request.headers.get("user-agent", "")[:40],
+            )
+        )
+        app_type = (documentType or "").strip().upper() or None
+        try:
+            out = await _leer(file, front, back)
+        except HTTPException as e:
+            ms = int((time.monotonic() - started) * 1000)
+            log.warning(
+                reqlog.describe_response(
+                    e.status_code,
+                    e.detail if isinstance(e.detail, dict) else {"codigo": str(e.detail)},
+                    ms=ms,
+                    app_type=app_type,
+                )
+            )
+            raise
+        else:
+            ms = int((time.monotonic() - started) * 1000)
+            status = out.status_code if isinstance(out, JSONResponse) else 200
+            log.info(
+                reqlog.describe_response(
+                    status,
+                    out,
+                    ms=ms,
+                    app_type=app_type,
+                    app_disconnected=await request.is_disconnected(),
+                )
+            )
+            return out
+        finally:
+            reqlog.finish(token)
+
+    async def _leer(
+        file: UploadFile | None, front: UploadFile | None, back: UploadFile | None
+    ):
         raws: list[bytes] = []  # bytes originales: solo para guardar las fotos fallidas (pruebas)
         first = front if front is not None else file
         if first is not None:
@@ -573,7 +621,7 @@ def _set_priority(level: str) -> None:
 
 def main() -> None:
     settings = Settings()
-    logging.basicConfig(level=logging.INFO)
+    reqlog.install()
     _set_priority(settings.priority or ("below_normal" if settings.low_priority else "normal"))
     app = create_app(settings)
     # Cargar los modelos ahora y no con la primera foto del visitante (en un equipo lento tarda).
