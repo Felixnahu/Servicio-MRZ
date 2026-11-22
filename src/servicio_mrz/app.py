@@ -409,6 +409,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f"{int((time.monotonic() - t0) * 1000)}ms "
                 + (f"tarjeta:{reading.card_aspect:.2f}" if reading.card else "cuadro")
                 + (" mrz" if reading.observation is not None else "")
+                + (f" c{reading.mrz_confidence:.2f}" if reading.card else "")
             )
             if reading.checks_ok and reading.result is not None:
                 ms = int((time.monotonic() - started) * 1000)

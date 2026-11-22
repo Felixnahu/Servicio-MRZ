@@ -75,6 +75,7 @@ class Reading:
     card: tuple[tuple[float, float], ...] | None = None  # 4 esquinas normalizadas, si se localizo
     observation: Observation | None = None  # probabilidades por celda, para fusionar cuadros
     card_aspect: float = 0.0  # proporcion lado largo/corto de la tarjeta localizada (0 = ninguna)
+    mrz_confidence: float = 0.0  # mejor confianza de la lectura de MRZ (0..1); solo para el log
     checks_ok: bool = field(init=False)
 
     def __post_init__(self) -> None:
@@ -375,6 +376,7 @@ class MrzReader:
         best: MrzResult | None = None
         best_rows: tuple[RowBox, ...] = ()
         observation: Observation | None = None
+        best_confidence = 0.0
         # Voto firme: solo ese sentido (la otra pasada cuesta de 3 a 5 s en el totem y casi nunca
         # sirve). Voto dudoso o sin voto: los dos, empezando por el mas probable.
         if flipped is not None and firmness >= orientation.DECISIVE_RATIO:
@@ -396,6 +398,7 @@ class MrzReader:
                 observation is None or read.observation.confidence > observation.confidence
             ):
                 observation = read.observation
+            best_confidence = max(best_confidence, float(read.confidence))
             if len(read.segments) < 2:
                 continue
             used = bool(read.result and read.result.core_checks_ok)
@@ -418,7 +421,9 @@ class MrzReader:
                 for r in best_rows
             )
         elapsed = int((time.monotonic() - started) * 1000)
-        return Reading(best, best_rows, 0, elapsed, card_norm, observation, located.aspect)
+        return Reading(
+            best, best_rows, 0, elapsed, card_norm, observation, located.aspect, best_confidence
+        )
 
     def _read_frame(self, img: np.ndarray, started: float, deadline: float) -> Reading:
         height, width = img.shape[:2]
