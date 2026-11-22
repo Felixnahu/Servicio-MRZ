@@ -25,6 +25,9 @@ log = logging.getLogger(__name__)
 
 MIN_LINES = 3  # lineas horizontales largas necesarias para votar
 MIN_RATIO = 0.2  # |voto| / peso total: por debajo es un empate y no se decide
+# Con un voto tan firme no se lee la otra orientacion (medido en 132 votos: mediana 1.00, el 93 %
+# llega a 0.6). Por debajo se prueban las dos, empezando por la mas probable.
+DECISIVE_RATIO = 0.6
 _LONG = 2.0  # una linea de texto es al menos 2 veces mas ancha que alta
 _MIN_WIDTH = 60.0
 
@@ -52,16 +55,22 @@ def _votes(engine: Any, card: np.ndarray) -> tuple[float, float, int]:
     return net, total, len(lines)
 
 
-def upside_down(engine: Any, card: np.ndarray) -> bool | None:
-    """True si el texto de la tarjeta esta al reves, False si va del derecho, None si no se sabe."""
+def assess(engine: Any, card: np.ndarray) -> tuple[bool | None, float]:
+    """(al reves, firmeza). `al reves` es None si no se sabe; `firmeza` va de 0 a 1."""
     try:
         net, total, lines = _votes(engine, card)
     except Exception:  # noqa: BLE001 - es una optimizacion: nunca debe tumbar la lectura
         log.warning("No se pudo estimar el sentido de la tarjeta", exc_info=True)
-        return None
-    if lines < MIN_LINES or total <= 0 or abs(net) / total < MIN_RATIO:
-        return None
-    return net < 0
+        return None, 0.0
+    if lines < MIN_LINES or total <= 0:
+        return None, 0.0
+    ratio = abs(net) / total
+    return (net < 0 if ratio >= MIN_RATIO else None), ratio
+
+
+def upside_down(engine: Any, card: np.ndarray) -> bool | None:
+    """True si el texto de la tarjeta esta al reves, False si va del derecho, None si no se sabe."""
+    return assess(engine, card)[0]
 
 
 def sideways(engine: Any, card: np.ndarray) -> bool:

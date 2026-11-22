@@ -349,7 +349,7 @@ class MrzReader:
             self._line_recognizer = celldecode.LineRecognizer(engine)
         # La tarjeta puede estar al reves (0 / 180 grados): se empieza por el sentido que el
         # clasificador de giro considera correcto; el otro queda como segunda pasada.
-        flipped = orientation.upside_down(engine, warped.image)
+        flipped, firmness = orientation.assess(engine, warped.image)
         if flipped:
             # El localizador recorta mejor una tarjeta del derecho: girar la FOTO y volver a
             # localizar suele dar un enderezado mas limpio que girar la tarjeta ya enderezada.
@@ -360,14 +360,20 @@ class MrzReader:
                 again = None
             if again is not None:
                 retry = cardfinder.warp_card(upside, again)
-                if orientation.upside_down(engine, retry.image) is False:
+                retry_flipped, retry_firmness = orientation.assess(engine, retry.image)
+                if retry_flipped is False:
                     img, located, warped = upside, again, retry
-                    frame_flipped, flipped = not frame_flipped, False
+                    frame_flipped, flipped, firmness = not frame_flipped, False, retry_firmness
         card_norm = tuple((float(x) / width, float(y) / height) for x, y in located.corners)
         best: MrzResult | None = None
         best_rows: tuple[RowBox, ...] = ()
         observation: Observation | None = None
-        order = (True, False) if flipped else (False, True)
+        # Voto firme: solo ese sentido (la otra pasada cuesta de 3 a 5 s en el totem y casi nunca
+        # sirve). Voto dudoso o sin voto: los dos, empezando por el mas probable.
+        if flipped is not None and firmness >= orientation.DECISIVE_RATIO:
+            order = (bool(flipped),)
+        else:
+            order = (True, False) if flipped else (False, True)
         for index, rotated in enumerate(order):
             if index and time.monotonic() >= deadline:
                 break
