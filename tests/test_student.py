@@ -24,7 +24,8 @@ def test_estudiante_alone_is_the_occupation_field_of_an_id_card():
 def test_a_surname_like_carrera_does_not_count():
     """CARRERA esta a una letra de CABRERA (apellido comun): no basta, ni con ESTUDIANTE."""
     assert not student.detect(boxes("APELLIDOS: CARRERA CABRERA"))
-    assert not student.detect(boxes("CARRERA", "ESTUDIANTE"))  # apellido + ocupacion
+    # apellido + ocupacion, como sale en una cedula (con la etiqueta del campo)
+    assert not student.detect(boxes("CARRERA", "PROFESION U OCUPACION", "ESTUDIANTE"))
 
 
 def test_the_three_weak_words_together_do_count():
@@ -111,3 +112,20 @@ def test_with_time_for_two_passes_the_second_is_the_other_face(monkeypatch):
     res = oldci.read_old_ci(object(), [a, b], deadline=10.0)
     assert res is not None and res["suggestedCategory"] == "universitario"
     assert seen == [2, 1]  # reverso y despues anverso: la mitad del tiempo no se gasta girando
+
+
+def test_estudiante_alone_counts_on_a_sparse_card_without_id_labels():
+    """Carnet de estudiante sin 'universitario': pocas lineas, ESTUDIANTE, nombre y CI."""
+    assert student.detect(boxes("NOMBRE APELLIDO", "ESTUDIANTE", "C.I. 1234567", "INSTITUTO"))
+
+
+def test_estudiante_on_an_id_back_is_not_a_student_card_even_if_labels_are_unread():
+    """Reverso de cedula: el OCR a veces no lee 'OCUPACION' pero si la MRZ o el estado civil."""
+    assert not student.detect(boxes("ESTUDIANTE", "I<BOL1234567<<5<<<<<<<<<<<<<<<"))
+    assert not student.detect(boxes("ESTUDIANTE", "SOLTERO", "O RH (+)"))
+    assert not student.detect(boxes("ESTUDIANTE", "GRUPO SANGUINEO"))
+
+
+def test_estudiante_on_a_crowded_page_is_not_a_student_card():
+    texts = ["ESTUDIANTE"] + [f"LINEA {i}" for i in range(13)]
+    assert not student.detect(boxes(*texts))

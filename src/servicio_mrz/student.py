@@ -9,6 +9,10 @@ letra de `CABRERA`/`CARRERA`, apellidos comunes. Por eso NO bastan solas:
   o un dominio `.edu` (cada universidad se escribe distinto: hay carnets sin "universitario").
 - Debil: CARRERA, ESTUDIANTE y FACULTAD, EXACTAS. Hacen falta las tres a la vez (una cedula con
   apellido Carrera y ocupacion Estudiante tiene dos, pero no la facultad).
+- Por estructura: hay carnets de estudiante (de instituto o de universidad que no se nombra) que
+  traen solo ESTUDIANTE, el nombre y el CI en pocas lineas. Cuenta ESTUDIANTE cuando la tarjeta
+  tiene pocas cajas de texto (<= MAX_BOXES_ALONE) y NINGUNA etiqueta de cedula o pasaporte
+  (OCUPACION, PROFESION, DOMICILIO...): en una cedula la palabra es el valor de ese campo.
 
 Es una PISTA para que el backend valide la categoria, no una verificacion: cualquier papel con
 esas palabras la dispara y no se comprueba la vigencia.
@@ -28,6 +32,15 @@ _NOT_UNIV = ("UNIVERSAL", "UNIVERSO")  # empiezan por UNIV y no son de universid
 _UNIV_WORD = re.compile(r"\bUNIV[A-Z]{2,}")
 _EDU_DOMAIN = re.compile(r"\.\s?EDU\b")  # est.univalle.edu, upds.edu.bo
 WEAK = ("CARRERA", "ESTUDIANTE", "FACULTAD")
+# Etiquetas que solo traen una cedula o un pasaporte: con alguna, ESTUDIANTE es la ocupacion.
+_ID_LABELS = (
+    "OCUPACION", "PROFESION", "DOMICILIO", "ESTADOCIVIL", "NACIDO", "CERTIFICA", "IDENTIDAD",
+    "CEDULA", "PASAPORTE", "PASSPORT", "SURNAME", "NATIONALITY", "SERVICIOGENERAL", "LUGARDE",
+    # valores que solo salen en el reverso de una cedula, aunque el OCR no lea las etiquetas
+    "SOLTERO", "CASADO", "VIUDO", "DIVORCIADO", "SANGUINEO",
+)
+_MRZ_FILLER = "<<"  # relleno de una MRZ ("I<BOL...<<<<"): ninguna tarjeta de estudiante lo trae
+MAX_BOXES_ALONE = 12
 STRONG_RATIO = 0.85  # 13 letras: tolera 1-2 errores del OCR
 CATEGORY = "universitario"
 
@@ -56,7 +69,14 @@ def detect(boxes: list[Box]) -> bool:
         not w.startswith(_NOT_UNIV) for w in _UNIV_WORD.findall(raw)
     ):
         return True
-    return all(w in key for w in WEAK)  # exactas: sin tolerancia (evita CABRERA)
+    if all(w in key for w in WEAK):  # exactas: sin tolerancia (evita CABRERA)
+        return True
+    return (
+        "ESTUDIANTE" in key
+        and len(boxes) <= MAX_BOXES_ALONE
+        and not any(label in key for label in _ID_LABELS)
+        and _MRZ_FILLER not in raw
+    )
 
 
 def result() -> dict:
