@@ -66,3 +66,9 @@ def test_target_place_can_be_changed_for_testing_and_is_restored():
     finally:
         birthplace.set_target("SAMAIPATA")
     assert birthplace.decide("SAMAIPATA") is True
+
+
+def test_a_truncated_word_still_matches():
+    """El OCR puede comerse una letra: un texto mas corto que la palabra no debe dar False."""
+    assert birthplace.decide("SAMAIPAT") is True
+    assert birthplace.decide("SAMAIPTA") is True

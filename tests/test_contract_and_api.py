@@ -334,7 +334,7 @@ def test_there_is_no_external_service_any_more(monkeypatch):
     from servicio_mrz.ocr import MrzReader, Reading
 
     monkeypatch.setattr(MrzReader, "read_detailed", lambda self, img, *a, **k: Reading(None))
-    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, deadline=None: None)
+    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, *a, **k: None)
     blank = _jpeg(np.full((400, 600, 3), 200, np.uint8))
     settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)
     with TestClient(create_app(settings)) as c:

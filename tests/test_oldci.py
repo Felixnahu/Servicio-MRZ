@@ -123,7 +123,7 @@ def test_endpoint_uses_the_local_old_ci_reader(monkeypatch):
 
     calls = []
 
-    def fake_old(self, images, deadline=None):
+    def fake_old(self, images, deadline=None, detect_student=True):
         calls.append(len(images))
         return {"documentType": "CI_BO", "fields": {"birthDate": "1985-03-15"}, "source": "ocr"}
 
@@ -149,7 +149,7 @@ def test_old_ci_reader_is_tried_for_ambiguous_shape_and_false_mrz_observation(mo
     from servicio_mrz.mrzread import Observation
 
     calls = []
-    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, deadline=None: calls.append(1))
+    monkeypatch.setattr(MrzReader, "read_old_ci", lambda self, imgs, *a, **k: calls.append(1))
     ok, buf = cv2.imencode(".jpg", np.full((400, 600, 3), 200, np.uint8))
     files = {"front": ("f.jpg", buf.tobytes())}
     settings = Settings(camera_enabled=False, visual_ocr=False, _env_file=None)

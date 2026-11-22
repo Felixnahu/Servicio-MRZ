@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     old_ci_ocr: bool = True
     # Tope (segundos desde que llega la peticion) del OCR del carnet antiguo.
     old_ci_deadline_s: float = 28.0
+    # Carnet universitario: si una foto trae UNIVERSITARIO/UNIVERSIDAD, se devuelve la categoria
+    # sugerida `universitario` (el resto se completa a mano). false = no se detecta.
+    student_detection: bool = True
     # Cedula 2023: tras leer la MRZ, lee el "lugar de nacimiento" del reverso (franja superior,
     # ~0.3 s) para `isSamaipateno`. Si falla o no hay tiempo, queda en null.
     birthplace_ocr: bool = True

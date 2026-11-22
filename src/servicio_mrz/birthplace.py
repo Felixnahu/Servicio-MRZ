@@ -45,7 +45,7 @@ def has_samaipata(text: str) -> bool:
     n = len(TARGET)
     return any(
         difflib.SequenceMatcher(None, key[i : i + n], TARGET).ratio() >= MATCH_RATIO
-        for i in range(max(len(key) - n + 1, 0))
+        for i in range(max(len(key) - n + 1, 1))
     )
 
 
@@ -92,5 +92,5 @@ def _is_label(text: str) -> bool:
     n = 7
     return any(
         difflib.SequenceMatcher(None, key[i : i + n], "LUGARDE").ratio() >= 0.85
-        for i in range(max(len(key) - n + 1, 0))
+        for i in range(max(len(key) - n + 1, 1))
     )

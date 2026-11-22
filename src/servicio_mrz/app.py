@@ -406,12 +406,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 max(t0 + OLD_CI_MIN_S, started + settings.old_ci_deadline_s),
                 started + settings.request_deadline_s - 5,
             )
-            old = await asyncio.to_thread(reader.read_old_ci, images, old_deadline)
+            old = await asyncio.to_thread(
+                reader.read_old_ci, images, old_deadline, settings.student_detection
+            )
             ms = int((time.monotonic() - started) * 1000)
             log.info(
                 "leer: fotos=%d mrz_ms=%s carnet_antiguo_ms=%d total_ms=%d resultado=%s",
                 len(images), mrz_ms, int((time.monotonic() - t0) * 1000), ms,
-                "ocr_carnet_antiguo" if old else "carnet_antiguo_no_leido",
+                (old.get("documentModel", "ocr") if old else "carnet_antiguo_no_leido"),
             )
             if old is not None:
                 old["kycMs"] = old["duracionMs"] = ms

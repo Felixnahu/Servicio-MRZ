@@ -268,10 +268,13 @@ class MrzReader:
         except Exception:  # noqa: BLE001 - el calentamiento nunca debe tumbar el servicio
             log.warning("No se pudo calentar los modelos (se cargaran con la primera foto)")
 
-    def read_old_ci(self, images: list[np.ndarray], deadline: float | None = None) -> dict | None:
+    def read_old_ci(
+        self, images: list[np.ndarray], deadline: float | None = None, detect_student: bool = True
+    ) -> dict | None:
         """Cedula boliviana antigua (sin MRZ) por plantilla: nombre y fecha del reverso, numero del
-        anverso. None si no se lee la fecha de nacimiento o se agota `deadline`."""
-        return oldci.read_old_ci(self._engine_ready(), images, deadline)
+        anverso. Si es un carnet universitario, solo la categoria. None si no se lee la fecha de
+        nacimiento o se agota `deadline`."""
+        return oldci.read_old_ci(self._engine_ready(), images, deadline, detect_student)
 
     def read_birthplace(self, img: np.ndarray) -> bool | None:
         """Cedula 2023 (reverso): True/False/None segun si el lugar de nacimiento es Samaipata.

@@ -30,7 +30,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from servicio_mrz import birthplace, visual
+from servicio_mrz import birthplace, student, visual
 from servicio_mrz.visual import Box
 
 # Zona del anverso con "No. 1234567": ((y0, y1), (x0, x1)) como fraccion de la tarjeta enderezada.
@@ -45,6 +45,7 @@ class OldCiRead:
     full_name: str = ""
     number: str = ""
     samaipateno: bool | None = None
+    student: bool = False  # la tarjeta es un carnet universitario (no una cedula antigua)
 
     def merge(self, other: OldCiRead) -> None:
         self.born = self.born or other.born
@@ -134,13 +135,23 @@ def _front_number(engine: Any, card: np.ndarray) -> str:
 
 def _back(engine: Any, card: np.ndarray) -> OldCiRead | None:
     boxes, width, _ = visual.read_boxes(engine, card, use_cls=False)
-    return parse_back(boxes, width)
+    read = parse_back(boxes, width)
+    if read is None and student.detect(boxes):
+        # Mismo OCR, sin coste extra: un carnet universitario no tiene fecha ni formato antiguo.
+        return OldCiRead(student=True)
+    return read
 
 
 def read_old_ci(
-    engine: Any, images: list[np.ndarray], deadline: float | None = None
+    engine: Any,
+    images: list[np.ndarray],
+    deadline: float | None = None,
+    detect_student: bool = True,
 ) -> dict[str, Any] | None:
     """Datos de una cedula antigua a partir de sus fotos (frente y/o reverso, en cualquier orden).
+
+    Si la tarjeta resulta ser un carnet universitario (`detect_student`), devuelve solo la
+    categoria sugerida (ver `student.py`) con los datos vacios para completarlos a mano.
 
     `deadline` (time.monotonic) corta el trabajo entre pasos: en un equipo lento o saturado esta
     lectura puede pasar de 40 s y la app abandona a los 45. None si no se logra la fecha de
@@ -167,6 +178,10 @@ def read_old_ci(
         part = _back(engine, cards[i])
         if part is None and not late():
             part = _back(engine, cv2.rotate(cards[i], cv2.ROTATE_180))
+        if part is not None and part.student:
+            if detect_student:
+                return student.result()
+            continue
         if part is not None:
             total.merge(part)
             back_idx = i
