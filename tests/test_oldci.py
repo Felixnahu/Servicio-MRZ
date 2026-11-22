@@ -238,3 +238,13 @@ def test_upright_card_relocates_the_flipped_photo_when_the_vote_confirms_it(monk
     votes = iter([True, False])  # 1.a tarjeta al reves; la re-localizada, del derecho
     monkeypatch.setattr(oldci.orientation, "upside_down", lambda engine, c: next(votes))
     assert oldci._upright_card(object(), photo) is straight
+
+
+def test_a_passport_page_is_never_an_old_ci_back():
+    """'NACIONALIDAD' mal leida contiene 'NACID': no debe pasar por reverso de carnet antiguo."""
+    boxes = [
+        Box(10, 10, 300, 40, "NACIDNALIDAD / NATIONALITY"),
+        Box(10, 50, 300, 80, "FECHA DE NACIMIENTO 08 DIC 1988"),
+        Box(10, 90, 300, 120, "JUAN PEREZ GOMEZ"),
+    ]
+    assert oldci.parse_back(boxes, 600) is None

@@ -36,6 +36,7 @@ from servicio_mrz.visual import Box
 # Zona del anverso con "No. 1234567": ((y0, y1), (x0, x1)) como fraccion de la tarjeta enderezada.
 FRONT_REGION = ((0.55, 0.80), (0.0, 0.6))
 _NOT_NAME = ("PERTENECE", "IMPRESION", "CERTIFICA", "FIRMA", "SERVICIO", "IDENTIFICACION")
+_PASSPORT_WORDS = ("NATION", "PASSPORT", "PASAPORTE", "SURNAME", "GIVENNAME")
 _MIN_YEAR = 1900
 
 
@@ -68,6 +69,10 @@ def parse_back(boxes: list[Box], width: float, today: date | None = None) -> Old
     # La lectura puede probarse tambien en una pagina de pasaporte sin MRZ detectada. Exigir una
     # senal propia del reverso antiguo evita tomar su fecha de nacimiento como carnet antiguo.
     keys = [visual._key(b.text) for b in boxes]
+    # Una pagina de pasaporte nunca es un carnet antiguo: su etiqueta NACIONALIDAD mal leida
+    # ("NACIDNALIDAD") contiene "NACID" y pasaba por reverso. El pasaporte se lee solo por MRZ.
+    if any(marker in key for key in keys for marker in _PASSPORT_WORDS):
+        return None
     if not any(
         "CERTIF" in key or "NACID" in key or "NACLD" in key
         for key in keys
