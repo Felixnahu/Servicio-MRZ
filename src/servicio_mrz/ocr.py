@@ -280,11 +280,13 @@ class MrzReader:
     def read_birthplace(self, img: np.ndarray) -> bool | None:
         """Cedula 2023 (reverso): True/False/None segun si el lugar de nacimiento es Samaipata.
 
-        Solo lee la franja superior de la tarjeta, donde va "LUGAR DE NACIMIENTO" (~0.3 s).
+        Solo lee la franja superior de la tarjeta, donde va "LUGAR DE NACIMIENTO". La tarjeta se
+        endereza antes con el voto de sentido; si ese voto es firme se lee UNA vez (medido en el
+        totem: la etapa costaba 12-19 s probando las dos orientaciones y localizando otra vez).
         """
         engine = self._engine_ready()
-        card = visual._prepare(img)
-        for rot in (card, cv2.rotate(card, cv2.ROTATE_180)):
+        card, decisive = oldci.upright(engine, img)
+        for rot in (card,) if decisive else (card, cv2.rotate(card, cv2.ROTATE_180)):
             band = rot[: int(0.3 * rot.shape[0])]
             boxes, width, _ = visual.read_boxes(engine, band, use_cls=False)
             if any(birthplace._is_label(b.text) for b in boxes):

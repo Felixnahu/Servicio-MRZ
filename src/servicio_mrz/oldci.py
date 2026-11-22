@@ -176,30 +176,40 @@ def _back(engine: Any, card: np.ndarray) -> OldCiRead | None:
     return read
 
 
-def _upright_card(engine: Any, img: np.ndarray) -> np.ndarray:
-    """Tarjeta enderezada con el texto del derecho.
+def upright(engine: Any, img: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Tarjeta enderezada con el texto del derecho, y si el sentido quedo bien establecido.
 
     Si el clasificador de giro dice que esta al reves (0.1 s), se gira la FOTO y se vuelve a
     localizar: el localizador recorta mejor una tarjeta del derecho (con la tarjeta enderezada y
     girada despues la fecha del reverso se perdia en 2 de 5 carnets). Evita gastar una pasada
     completa de OCR (4-9 s en el totem) leyendo primero la tarjeta girada.
+
+    El segundo valor es True si el voto fue firme (>= DECISIVE_RATIO): no hace falta probar el
+    otro sentido. Con la tarjeta de lado (texto vertical) se gira 90 grados y se vuelve a votar.
     """
     card = visual._prepare(img)
-    upside = orientation.upside_down(engine, card)
+    upside, firmness = orientation.assess(engine, card)
     if upside is None and orientation.sideways(engine, card):
         # tarjeta puesta de lado: casi todo el texto es vertical. Se gira 90 grados y se decide
         # entre las dos direcciones con el mismo clasificador de giro.
         turned = cv2.rotate(card, cv2.ROTATE_90_CLOCKWISE)
-        if orientation.upside_down(engine, turned):
-            return cv2.rotate(turned, cv2.ROTATE_180)
-        return turned
+        turned_upside, turned_firmness = orientation.assess(engine, turned)
+        decisive = turned_upside is not None and turned_firmness >= orientation.DECISIVE_RATIO
+        if turned_upside:
+            return cv2.rotate(turned, cv2.ROTATE_180), decisive
+        return turned, decisive
     if not upside:
-        return card
+        return card, upside is not None and firmness >= orientation.DECISIVE_RATIO
     flipped = cv2.rotate(img, cv2.ROTATE_180)
     again = visual._prepare(flipped)
-    if orientation.upside_down(engine, again) is False:
-        return again
-    return cv2.rotate(card, cv2.ROTATE_180)
+    again_upside, again_firmness = orientation.assess(engine, again)
+    if again_upside is False:
+        return again, again_firmness >= orientation.DECISIVE_RATIO
+    return cv2.rotate(card, cv2.ROTATE_180), firmness >= orientation.DECISIVE_RATIO
+
+
+def _upright_card(engine: Any, img: np.ndarray) -> np.ndarray:
+    return upright(engine, img)[0]
 
 
 def read_old_ci(

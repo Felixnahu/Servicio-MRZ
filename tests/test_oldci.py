@@ -208,7 +208,7 @@ def test_upside_down_card_is_straightened_before_the_first_ocr_pass(monkeypatch)
     card[:5] = 255  # marca arriba: tras girar 180 grados queda abajo
     monkeypatch.setattr(oldci.visual, "_prepare", lambda img: card)
     # siempre "al reves", tambien tras girar la foto: se cae al giro de la tarjeta enderezada
-    monkeypatch.setattr(oldci.orientation, "upside_down", lambda engine, c: True)
+    monkeypatch.setattr(oldci.orientation, "assess", lambda engine, c: (True, 1.0))
 
     def fake_boxes(engine, c, use_cls=False):
         seen.append(bool(c[-1].any()))  # True = la marca quedo abajo = se giro
@@ -235,8 +235,8 @@ def test_upright_card_relocates_the_flipped_photo_when_the_vote_confirms_it(monk
     flipped[:] = 99
     monkeypatch.setattr(oldci.visual, "_prepare", fake_prepare)
     monkeypatch.setattr(oldci.cv2, "rotate", lambda img, code: flipped)
-    votes = iter([True, False])  # 1.a tarjeta al reves; la re-localizada, del derecho
-    monkeypatch.setattr(oldci.orientation, "upside_down", lambda engine, c: next(votes))
+    votes = iter([(True, 1.0), (False, 1.0)])  # 1.a tarjeta al reves; la re-localizada, derecha
+    monkeypatch.setattr(oldci.orientation, "assess", lambda engine, c: next(votes))
     assert oldci._upright_card(object(), photo) is straight
 
 
